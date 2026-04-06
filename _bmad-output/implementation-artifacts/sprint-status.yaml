@@ -65,7 +65,7 @@ development_status:
   3-2-complete-interactive-quest-completion: done
   3-3-cancel-interactive-quest-cancellation: done
   3-4-defer-interactive-quest-deferral-with-warning: done
-  3-5-add-manual-quest-addition: backlog
+  3-5-add-manual-quest-addition: done
   3-6-help-command-reference: backlog
   epic-3-retrospective: optional
 
