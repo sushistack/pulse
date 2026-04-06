@@ -51,8 +51,8 @@ development_status:
   epic-1-retrospective: optional
 
   # Epic 2: Daily Quest Generation & Board View
-  epic-2: backlog
-  2-1-plane-so-api-helper-and-pulse-meta-parser: backlog
+  epic-2: in-progress
+  2-1-plane-so-api-helper-and-pulse-meta-parser: done
   2-2-w1-step-1-deferred-quest-migration: backlog
   2-3-w1-step-2-deterministic-routine-copy: backlog
   2-4-w1-degraded-mode-and-execution-summary: backlog
