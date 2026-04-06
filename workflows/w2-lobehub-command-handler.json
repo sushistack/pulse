@@ -162,6 +162,51 @@
                 "conditions": [
                   {
                     "leftValue": "={{ $json._route }}",
+                    "rightValue": "restore",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "outputKey": "restore"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json._route }}",
+                    "rightValue": "edit",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "outputKey": "edit"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json._route }}",
+                    "rightValue": "regen",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "outputKey": "regen"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json._route }}",
                     "rightValue": "brief",
                     "operator": {
                       "type": "string",
@@ -393,7 +438,7 @@
       "typeVersion": 2,
       "position": [
         1000,
-        1640
+        1800
       ]
     },
     {
@@ -406,7 +451,7 @@
       "typeVersion": 2,
       "position": [
         1000,
-        1800
+        1960
       ]
     },
     {
@@ -419,7 +464,7 @@
       "typeVersion": 2,
       "position": [
         1000,
-        1960
+        2120
       ]
     },
     {
@@ -432,7 +477,7 @@
       "typeVersion": 2,
       "position": [
         1000,
-        2120
+        2280
       ]
     },
     {
@@ -445,7 +490,7 @@
       "typeVersion": 2,
       "position": [
         1000,
-        2280
+        2440
       ]
     },
     {
@@ -458,7 +503,7 @@
       "typeVersion": 2,
       "position": [
         1000,
-        2600
+        2760
       ]
     },
     {
@@ -486,7 +531,7 @@
       "typeVersion": 2,
       "position": [
         960,
-        2720
+        2880
       ]
     },
     {
@@ -499,7 +544,46 @@
       "typeVersion": 2,
       "position": [
         960,
-        2840
+        3000
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ===========================================\n// /restore — Restore Deferred Quests\n// ===========================================\n// Phase 1 (no target): List all deferred quests\n// Phase 2 (with target): Move selected quests to To-Do with target_date = today\n\nconst config = {\n  base_url: $env.PULSE_PLANE_BASE_URL,\n  workspace_slug: $env.PULSE_PLANE_WORKSPACE_SLUG,\n  api_key: $env.PULSE_PLANE_API_KEY,\n  daily_quest_project_id: $env.PULSE_DAILY_QUEST_PROJECT_ID,\n  state_todo: $env.PULSE_STATE_TODO_ID,\n  state_deferred: $env.PULSE_STATE_DEFERRED_ID,\n};\n\nconst basePath = `${config.base_url}/api/v1/workspaces/${config.workspace_slug}`;\nconst headers = { 'X-API-Key': config.api_key, 'Content-Type': 'application/json' };\nconst tz = $env.PULSE_USER_TIMEZONE || 'Asia/Seoul';\nconst DRY_RUN = ($env.PULSE_DRY_RUN || 'false').toLowerCase() === 'true' || ($env.PULSE_DRY_RUN || 'false') === '1';\n\nconst sleep = (ms) => new Promise((r) => setTimeout(r, ms));\nconst MAX_RETRIES = 3;\nconst RETRY_MS = 5000;\nconst withRetry = async (fn, ctx) => {\n  for (let i = 1; i <= MAX_RETRIES; i++) {\n    try { return await fn(); } catch (e) {\n      console.log(`[RETRY] ${ctx} attempt ${i}/${MAX_RETRIES}: ${e.message}`);\n      if (i === MAX_RETRIES) {\n        const isTimeout = e.code === 'ETIMEDOUT' || e.code === 'ECONNABORTED' || e.message?.includes('timeout');\n        const errorCode = isTimeout ? 'PLANE_API_TIMEOUT' : 'PLANE_API_ERROR';\n        const err = new Error(`[${errorCode}] ${ctx}: ${e.message}`);\n        err.errorCode = errorCode;\n        throw err;\n      }\n      await sleep(RETRY_MS);\n    }\n  }\n};\n\nconst apiGet = async (path) => {\n  const res = await fetch(`${basePath}${path}`, { method: 'GET', headers });\n  if (!res.ok) throw new Error(`HTTP ${res.status}`);\n  return res.json();\n};\n\nconst apiPatch = async (path, body) => {\n  const res = await fetch(`${basePath}${path}`, { method: 'PATCH', headers, body: JSON.stringify(body) });\n  if (!res.ok) throw new Error(`HTTP ${res.status}`);\n  return res.json();\n};\n\nconst apiPost = async (path, body) => {\n  const res = await fetch(`${basePath}${path}`, { method: 'POST', headers, body: JSON.stringify(body) });\n  if (!res.ok) throw new Error(`HTTP ${res.status}`);\n  return res.json();\n};\n\nconst decodeEntities = (s) => s.replace(/&quot;/g, '\"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, \"'\").replace(/&apos;/g, \"'\");\nconst extractMeta = (html) => {\n  if (!html) return null;\n  try {\n    let m = html.match(/<pre><code\\s+class=\"language-pulse-meta\">([\\s\\S]*?)<\\/code><\\/pre>/);\n    if (m) return JSON.parse(decodeEntities(m[1].trim()));\n    m = html.match(/<pre><code>([\\s\\S]*?)<\\/code><\\/pre>/);\n    if (m) { const c = decodeEntities(m[1].trim()); if (c.includes('\"schema_version\"')) return JSON.parse(c); }\n    m = html.match(/```pulse-meta\\s*\\n([\\s\\S]*?)\\n\\s*```/);\n    if (m) return JSON.parse(m[1].trim());\n  } catch (e) { return null; }\n  return null;\n};\n\nconst PRIORITY_EMOJI = { 4: '\\uD83D\\uDD34', 3: '\\uD83D\\uDFE0', 2: '\\uD83D\\uDFE1', 1: '\\uD83D\\uDFE2', 0: '\\uD83D\\uDFE2' };\nconst PRIORITY_NAME = { 4: 'urgent', 3: 'high', 2: 'medium', 1: 'low', 0: 'none' };\nconst formatDuration = (min) => {\n  if (!min) return '';\n  if (min >= 60) { const h = Math.floor(min / 60); const m = min % 60; return m > 0 ? `${h}h${m}min` : `${h}h`; }\n  return `${min}min`;\n};\n\nconst target = $input.first().json.target;\n\ntry {\n  const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: tz });\n  const projId = config.daily_quest_project_id;\n\n  if (!target) {\n    // Phase 1: List all deferred quests\n    const result = await withRetry(\n      () => apiGet(`/projects/${projId}/issues/?per_page=100&expand=labels,state&state=${config.state_deferred}`),\n      'Fetch deferred quests'\n    );\n    const deferred = result.results || result || [];\n\n    if (deferred.length === 0) {\n      return [{ json: {\n        response_type: 'info',\n        message: '\\u2139\\uFE0F No deferred quests to restore.',\n        data: null, suggestions: ['Try /today to view your quest board'], awaiting_input: false\n      }}];\n    }\n\n    let list = '';\n    for (let i = 0; i < deferred.length; i++) {\n      const q = deferred[i];\n      const pEmoji = PRIORITY_EMOJI[q.priority] || '\\uD83D\\uDFE1';\n      const pName = PRIORITY_NAME[q.priority] || 'medium';\n      const meta = extractMeta(q.description_html);\n      const time = meta?.routine_time || '--:--';\n      const dur = meta?.routine_duration_min ? formatDuration(meta.routine_duration_min) : '';\n      const deferCount = meta?.defer_count || 0;\n      const deferSuffix = deferCount > 0 ? ` (deferred x${deferCount})` : '';\n      list += `${i + 1}. [${pEmoji} ${pName}] ${q.name} \\u2014 ${time}${dur ? ` (${dur})` : ''}${deferSuffix}\\n`;\n    }\n\n    return [{ json: {\n      response_type: 'list',\n      message: list,\n      data: { quest_ids: deferred.map(q => q.id), count: deferred.length },\n      suggestions: ['Enter number(s) (e.g., 1,3 or 1-3):'],\n      awaiting_input: true\n    }}];\n  }\n\n  // Phase 2: Restore selected quests\n  const issueIds = target.split(',').map(s => s.trim()).filter(Boolean);\n  const nowStr = new Date().toLocaleTimeString('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit' });\n\n  // Validate issue IDs are actually deferred\n  const deferredResult = await withRetry(\n    () => apiGet(`/projects/${projId}/issues/?per_page=100&expand=labels,state&state=${config.state_deferred}`),\n    'Fetch deferred quests for validation'\n  );\n  const deferredQuests = deferredResult.results || deferredResult || [];\n  const deferredIds = new Set(deferredQuests.map(q => q.id));\n\n  const invalidIds = issueIds.filter(id => !deferredIds.has(id));\n  if (invalidIds.length > 0) {\n    return [{ json: {\n      response_type: 'error',\n      message: `\\u274C [INVALID_INPUT] Issue(s) ${invalidIds.join(', ')} are not in deferred state.`,\n      data: { error_code: 'INVALID_INPUT' },\n      suggestions: ['Use /restore to see deferred quests'],\n      awaiting_input: false\n    }}];\n  }\n\n  let restored = 0;\n\n  for (const issueId of issueIds) {\n    if (DRY_RUN) {\n      console.log(`[DRY_RUN] Would restore issue ${issueId} (state \\u2192 To-Do, target_date \\u2192 ${todayStr})`);\n      console.log(`[DRY_RUN] Would add comment on issue ${issueId}`);\n    } else {\n      await withRetry(\n        () => apiPatch(`/projects/${projId}/issues/${issueId}/`, {\n          state: config.state_todo,\n          target_date: todayStr\n        }),\n        `Restore issue ${issueId}`\n      );\n      await withRetry(\n        () => apiPost(`/projects/${projId}/issues/${issueId}/comments/`, {\n          comment_html: `<p>\\uD83D\\uDD04 [${nowStr}] Restored by user</p>`\n        }),\n        `Comment on ${issueId}`\n      );\n    }\n    restored++;\n  }\n\n  const dryTag = DRY_RUN ? ' [DRY_RUN]' : '';\n  return [{ json: {\n    response_type: 'confirmation',\n    message: `\\u2705${dryTag} ${restored} quest${restored !== 1 ? 's' : ''} restored to today's board!`,\n    data: { restored_count: restored, issue_ids: issueIds, dry_run: DRY_RUN },\n    suggestions: ['Type /today to see updated board'],\n    awaiting_input: false\n  }}];\n} catch (e) {\n  const code = e.errorCode || 'PLANE_API_ERROR';\n  const recovery = code === 'PLANE_API_TIMEOUT'\n    ? 'Please check Plane.so service status and try again later.'\n    : 'Please check Plane.so API configuration.';\n  return [{ json: {\n    response_type: 'error',\n    message: `\\u274C [${code}] ${e.message}. ${recovery}`,\n    data: { error_code: code },\n    suggestions: ['Check n8n execution logs'],\n    awaiting_input: false\n  }}];\n}"
+      },
+      "id": "w2-restore",
+      "name": "Code: /restore Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        1480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ===========================================\n// /edit — Edit Quest Time & Priority\n// ===========================================\n// Phase 1 (no target): List today's To-Do/In Progress quests\n// Phase 2 (with target + params): Update the specified field\n\nconst config = {\n  base_url: $env.PULSE_PLANE_BASE_URL,\n  workspace_slug: $env.PULSE_PLANE_WORKSPACE_SLUG,\n  api_key: $env.PULSE_PLANE_API_KEY,\n  daily_quest_project_id: $env.PULSE_DAILY_QUEST_PROJECT_ID,\n};\n\nconst basePath = `${config.base_url}/api/v1/workspaces/${config.workspace_slug}`;\nconst headers = { 'X-API-Key': config.api_key, 'Content-Type': 'application/json' };\nconst tz = $env.PULSE_USER_TIMEZONE || 'Asia/Seoul';\nconst DRY_RUN = ($env.PULSE_DRY_RUN || 'false').toLowerCase() === 'true' || ($env.PULSE_DRY_RUN || 'false') === '1';\n\nconst sleep = (ms) => new Promise((r) => setTimeout(r, ms));\nconst MAX_RETRIES = 3;\nconst RETRY_MS = 5000;\nconst withRetry = async (fn, ctx) => {\n  for (let i = 1; i <= MAX_RETRIES; i++) {\n    try { return await fn(); } catch (e) {\n      console.log(`[RETRY] ${ctx} attempt ${i}/${MAX_RETRIES}: ${e.message}`);\n      if (i === MAX_RETRIES) {\n        const isTimeout = e.code === 'ETIMEDOUT' || e.code === 'ECONNABORTED' || e.message?.includes('timeout');\n        const errorCode = isTimeout ? 'PLANE_API_TIMEOUT' : 'PLANE_API_ERROR';\n        const err = new Error(`[${errorCode}] ${ctx}: ${e.message}`);\n        err.errorCode = errorCode;\n        throw err;\n      }\n      await sleep(RETRY_MS);\n    }\n  }\n};\n\nconst apiGet = async (path) => {\n  const res = await fetch(`${basePath}${path}`, { method: 'GET', headers });\n  if (!res.ok) throw new Error(`HTTP ${res.status}`);\n  return res.json();\n};\n\nconst apiPatch = async (path, body) => {\n  const res = await fetch(`${basePath}${path}`, { method: 'PATCH', headers, body: JSON.stringify(body) });\n  if (!res.ok) throw new Error(`HTTP ${res.status}`);\n  return res.json();\n};\n\nconst apiPost = async (path, body) => {\n  const res = await fetch(`${basePath}${path}`, { method: 'POST', headers, body: JSON.stringify(body) });\n  if (!res.ok) throw new Error(`HTTP ${res.status}`);\n  return res.json();\n};\n\nconst decodeEntities = (s) => s.replace(/&quot;/g, '\"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, \"'\").replace(/&apos;/g, \"'\");\nconst extractMeta = (html) => {\n  if (!html) return null;\n  try {\n    let m = html.match(/<pre><code\\s+class=\"language-pulse-meta\">([\\s\\S]*?)<\\/code><\\/pre>/);\n    if (m) return JSON.parse(decodeEntities(m[1].trim()));\n    m = html.match(/<pre><code>([\\s\\S]*?)<\\/code><\\/pre>/);\n    if (m) { const c = decodeEntities(m[1].trim()); if (c.includes('\"schema_version\"')) return JSON.parse(c); }\n    m = html.match(/```pulse-meta\\s*\\n([\\s\\S]*?)\\n\\s*```/);\n    if (m) return JSON.parse(m[1].trim());\n  } catch (e) { return null; }\n  return null;\n};\n\nconst updateMetaInHtml = (html, updates) => {\n  if (!html) return html;\n  const meta = extractMeta(html);\n  if (!meta) return html;\n  const updated = { ...meta, ...updates };\n  const jsonStr = JSON.stringify(updated, null, 2);\n  let result = html.replace(/<pre><code\\s+class=\"language-pulse-meta\">[\\s\\S]*?<\\/code><\\/pre>/, `<pre><code class=\"language-pulse-meta\">${jsonStr}</code></pre>`);\n  if (result !== html) return result;\n  result = html.replace(/<pre><code>[\\s\\S]*?<\\/code><\\/pre>/, `<pre><code class=\"language-pulse-meta\">${jsonStr}</code></pre>`);\n  if (result !== html) return result;\n  result = html.replace(/```pulse-meta\\s*\\n[\\s\\S]*?\\n\\s*```/, `\\`\\`\\`pulse-meta\\n${jsonStr}\\n\\`\\`\\``);\n  if (result !== html) return result;\n  return html;\n};\n\nconst PRIORITY_EMOJI = { 4: '\\uD83D\\uDD34', 3: '\\uD83D\\uDFE0', 2: '\\uD83D\\uDFE1', 1: '\\uD83D\\uDFE2', 0: '\\uD83D\\uDFE2' };\nconst PRIORITY_NAME = { 4: 'urgent', 3: 'high', 2: 'medium', 1: 'low', 0: 'none' };\nconst PRIORITY_VALUE = { 'urgent': 4, 'high': 3, 'medium': 2, 'low': 1, 'none': 0 };\nconst formatDuration = (min) => {\n  if (!min) return '';\n  if (min >= 60) { const h = Math.floor(min / 60); const m = min % 60; return m > 0 ? `${h}h${m}min` : `${h}h`; }\n  return `${min}min`;\n};\n\nconst target = $input.first().json.target;\nconst params = $input.first().json.params || {};\n\ntry {\n  const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: tz });\n  const projId = config.daily_quest_project_id;\n\n  if (!target) {\n    // Phase 1: List quests available for editing\n    const result = await withRetry(\n      () => apiGet(`/projects/${projId}/issues/?per_page=100&expand=labels,state&target_date=${todayStr}`),\n      'Fetch today quests'\n    );\n    const allQuests = result.results || result || [];\n    const actionable = allQuests.filter(q => {\n      const sn = q.state_detail?.name;\n      return sn === 'To-Do' || sn === 'In Progress';\n    });\n\n    if (actionable.length === 0) {\n      return [{ json: {\n        response_type: 'info',\n        message: '\\u2139\\uFE0F No quests available to edit.',\n        data: null, suggestions: ['Try /today to view your quest board'], awaiting_input: false\n      }}];\n    }\n\n    let list = '';\n    for (let i = 0; i < actionable.length; i++) {\n      const q = actionable[i];\n      const pEmoji = PRIORITY_EMOJI[q.priority] || '\\uD83D\\uDFE1';\n      const pName = PRIORITY_NAME[q.priority] || 'medium';\n      const meta = extractMeta(q.description_html);\n      const time = meta?.routine_time || '--:--';\n      const dur = meta?.routine_duration_min ? formatDuration(meta.routine_duration_min) : '';\n      list += `${i + 1}. [${pEmoji} ${pName}] ${q.name} \\u2014 ${time}${dur ? ` (${dur})` : ''}\\n`;\n    }\n\n    return [{ json: {\n      response_type: 'list',\n      message: `Select a quest to edit:\\n${list}`,\n      data: { quest_ids: actionable.map(q => q.id), count: actionable.length },\n      suggestions: ['Enter number(s) (e.g., 1,3 or 1-3):'],\n      awaiting_input: true\n    }}];\n  }\n\n  // Phase 2: Edit selected quest\n  const issueIds = target.split(',').map(s => s.trim()).filter(Boolean);\n  const nowStr = new Date().toLocaleTimeString('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit' });\n\n  // Validate edit field\n  const field = (params.field || '').toLowerCase().trim();\n  const value = (params.value || '').trim();\n\n  if (!field || !value) {\n    return [{ json: {\n      response_type: 'info',\n      message: 'What would you like to change? [time/priority]\\nExample: \"time 21:00\" or \"priority high\"',\n      data: { quest_ids: issueIds },\n      suggestions: ['time HH:MM', 'priority urgent/high/medium/low'],\n      awaiting_input: true\n    }}];\n  }\n\n  if (field !== 'time' && field !== 'priority') {\n    return [{ json: {\n      response_type: 'info',\n      message: '\\u26A0\\uFE0F Only time and priority can be edited in this version.',\n      data: null,\n      suggestions: ['time HH:MM', 'priority urgent/high/medium/low'],\n      awaiting_input: false\n    }}];\n  }\n\n  // Validate value\n  if (field === 'time') {\n    const timeRegex = /^([01]\\d|2[0-3]):([0-5]\\d)$/;\n    if (!timeRegex.test(value)) {\n      return [{ json: {\n        response_type: 'error',\n        message: `\\u274C [INVALID_INPUT] Invalid time format \"${value}\". Use HH:MM (e.g., 21:00).`,\n        data: { error_code: 'INVALID_INPUT' },\n        suggestions: ['Example: time 21:00'],\n        awaiting_input: false\n      }}];\n    }\n  }\n\n  if (field === 'priority') {\n    if (!PRIORITY_VALUE.hasOwnProperty(value)) {\n      return [{ json: {\n        response_type: 'error',\n        message: `\\u274C [INVALID_INPUT] Invalid priority \"${value}\". Use: urgent, high, medium, low, none.`,\n        data: { error_code: 'INVALID_INPUT' },\n        suggestions: ['Valid: urgent, high, medium, low, none'],\n        awaiting_input: false\n      }}];\n    }\n  }\n\n  // Validate issue IDs belong to today's actionable quests\n  const todayResult = await withRetry(\n    () => apiGet(`/projects/${projId}/issues/?per_page=100&expand=labels,state&target_date=${todayStr}`),\n    'Fetch today quests for validation'\n  );\n  const todayQuests = todayResult.results || todayResult || [];\n  const actionableIds = new Set(\n    todayQuests.filter(q => {\n      const sn = q.state_detail?.name;\n      return sn === 'To-Do' || sn === 'In Progress';\n    }).map(q => q.id)\n  );\n\n  const invalidIds = issueIds.filter(id => !actionableIds.has(id));\n  if (invalidIds.length > 0) {\n    return [{ json: {\n      response_type: 'error',\n      message: `\\u274C [INVALID_INPUT] Issue(s) ${invalidIds.join(', ')} are not in today's actionable quests.`,\n      data: { error_code: 'INVALID_INPUT' },\n      suggestions: ['Use /edit to see available quests'],\n      awaiting_input: false\n    }}];\n  }\n\n  const results = [];\n\n  for (const issueId of issueIds) {\n    const issue = await withRetry(\n      () => apiGet(`/projects/${projId}/issues/${issueId}/?expand=labels,state`),\n      `Fetch issue ${issueId}`\n    );\n\n    if (field === 'time') {\n      const updatedHtml = updateMetaInHtml(issue.description_html, { routine_time: value });\n      if (DRY_RUN) {\n        console.log(`[DRY_RUN] Would edit issue ${issueId}: time \\u2192 ${value}`);\n      } else {\n        await withRetry(\n          () => apiPatch(`/projects/${projId}/issues/${issueId}/`, { description_html: updatedHtml }),\n          `Edit time on ${issueId}`\n        );\n        await withRetry(\n          () => apiPost(`/projects/${projId}/issues/${issueId}/comments/`, {\n            comment_html: `<p>\\u270F\\uFE0F [${nowStr}] Edited by user: time \\u2192 ${value}</p>`\n          }),\n          `Comment on ${issueId}`\n        );\n      }\n      results.push(`\"${issue.name}\" \\u2014 time changed to ${value}`);\n    }\n\n    if (field === 'priority') {\n      const newPriority = PRIORITY_VALUE[value];\n      if (DRY_RUN) {\n        console.log(`[DRY_RUN] Would edit issue ${issueId}: priority \\u2192 ${value}`);\n      } else {\n        await withRetry(\n          () => apiPatch(`/projects/${projId}/issues/${issueId}/`, { priority: newPriority }),\n          `Edit priority on ${issueId}`\n        );\n        await withRetry(\n          () => apiPost(`/projects/${projId}/issues/${issueId}/comments/`, {\n            comment_html: `<p>\\u270F\\uFE0F [${nowStr}] Edited by user: priority \\u2192 ${value}</p>`\n          }),\n          `Comment on ${issueId}`\n        );\n      }\n      results.push(`\"${issue.name}\" \\u2014 priority changed to ${value}`);\n    }\n  }\n\n  const dryTag = DRY_RUN ? ' [DRY_RUN]' : '';\n  const message = results.map(r => `\\u2705${dryTag} Quest updated: ${r}`).join('\\n');\n\n  return [{ json: {\n    response_type: 'confirmation',\n    message,\n    data: { edited_count: results.length, issue_ids: issueIds, field, value, dry_run: DRY_RUN },\n    suggestions: ['Type /today to see updated board'],\n    awaiting_input: false\n  }}];\n} catch (e) {\n  const code = e.errorCode || 'PLANE_API_ERROR';\n  const recovery = code === 'PLANE_API_TIMEOUT'\n    ? 'Please check Plane.so service status and try again later.'\n    : 'Please check Plane.so API configuration.';\n  return [{ json: {\n    response_type: 'error',\n    message: `\\u274C [${code}] ${e.message}. ${recovery}`,\n    data: { error_code: code },\n    suggestions: ['Check n8n execution logs'],\n    awaiting_input: false\n  }}];\n}"
+      },
+      "id": "w2-edit",
+      "name": "Code: /edit Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        1560
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ===========================================\n// /regen — Regenerate Today's Quests\n// ===========================================\n// Phase 1 (no target/params.confirmed): Show confirmation prompt\n// Phase 2 (params.confirmed = 'yes'): Cancel non-done quests, re-run W1\n// Phase 2 (params.confirmed = 'no'): Cancel operation\n\nconst config = {\n  base_url: $env.PULSE_PLANE_BASE_URL,\n  workspace_slug: $env.PULSE_PLANE_WORKSPACE_SLUG,\n  api_key: $env.PULSE_PLANE_API_KEY,\n  daily_quest_project_id: $env.PULSE_DAILY_QUEST_PROJECT_ID,\n  state_todo: $env.PULSE_STATE_TODO_ID,\n  state_in_progress: $env.PULSE_STATE_IN_PROGRESS_ID,\n  state_deferred: $env.PULSE_STATE_DEFERRED_ID,\n  state_canceled: $env.PULSE_STATE_CANCELED_ID,\n  state_done: $env.PULSE_STATE_DONE_ID,\n};\n\nconst basePath = `${config.base_url}/api/v1/workspaces/${config.workspace_slug}`;\nconst headers = { 'X-API-Key': config.api_key, 'Content-Type': 'application/json' };\nconst tz = $env.PULSE_USER_TIMEZONE || 'Asia/Seoul';\nconst DRY_RUN = ($env.PULSE_DRY_RUN || 'false').toLowerCase() === 'true' || ($env.PULSE_DRY_RUN || 'false') === '1';\n\nconst sleep = (ms) => new Promise((r) => setTimeout(r, ms));\nconst MAX_RETRIES = 3;\nconst RETRY_MS = 5000;\nconst withRetry = async (fn, ctx) => {\n  for (let i = 1; i <= MAX_RETRIES; i++) {\n    try { return await fn(); } catch (e) {\n      console.log(`[RETRY] ${ctx} attempt ${i}/${MAX_RETRIES}: ${e.message}`);\n      if (i === MAX_RETRIES) {\n        const isTimeout = e.code === 'ETIMEDOUT' || e.code === 'ECONNABORTED' || e.message?.includes('timeout');\n        const errorCode = isTimeout ? 'PLANE_API_TIMEOUT' : 'PLANE_API_ERROR';\n        const err = new Error(`[${errorCode}] ${ctx}: ${e.message}`);\n        err.errorCode = errorCode;\n        throw err;\n      }\n      await sleep(RETRY_MS);\n    }\n  }\n};\n\nconst apiGet = async (path) => {\n  const res = await fetch(`${basePath}${path}`, { method: 'GET', headers });\n  if (!res.ok) throw new Error(`HTTP ${res.status}`);\n  return res.json();\n};\n\nconst apiPatch = async (path, body) => {\n  const res = await fetch(`${basePath}${path}`, { method: 'PATCH', headers, body: JSON.stringify(body) });\n  if (!res.ok) throw new Error(`HTTP ${res.status}`);\n  return res.json();\n};\n\nconst apiPost = async (path, body) => {\n  const res = await fetch(`${basePath}${path}`, { method: 'POST', headers, body: JSON.stringify(body) });\n  if (!res.ok) throw new Error(`HTTP ${res.status}`);\n  return res.json();\n};\n\nconst decodeEntities = (s) => s.replace(/&quot;/g, '\"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, \"'\").replace(/&apos;/g, \"'\");\nconst extractMeta = (html) => {\n  if (!html) return null;\n  try {\n    let m = html.match(/<pre><code\\s+class=\"language-pulse-meta\">([\\s\\S]*?)<\\/code><\\/pre>/);\n    if (m) return JSON.parse(decodeEntities(m[1].trim()));\n    m = html.match(/<pre><code>([\\s\\S]*?)<\\/code><\\/pre>/);\n    if (m) { const c = decodeEntities(m[1].trim()); if (c.includes('\"schema_version\"')) return JSON.parse(c); }\n    m = html.match(/```pulse-meta\\s*\\n([\\s\\S]*?)\\n\\s*```/);\n    if (m) return JSON.parse(m[1].trim());\n  } catch (e) { return null; }\n  return null;\n};\n\nconst params = $input.first().json.params || {};\n\ntry {\n  const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: tz });\n  const projId = config.daily_quest_project_id;\n\n  const confirmed = (params.confirmed || '').toLowerCase().trim();\n\n  if (!confirmed) {\n    // Phase 1: Show confirmation prompt\n    // Count how many quests would be affected\n    const result = await withRetry(\n      () => apiGet(`/projects/${projId}/issues/?per_page=100&expand=labels,state&target_date=${todayStr}`),\n      'Fetch today quests'\n    );\n    const quests = result.results || result || [];\n    const doneCount = quests.filter(q => q.state_detail?.name === 'Done').length;\n    const cancelCount = quests.length - doneCount;\n\n    let message = `\\u26A0\\uFE0F This will regenerate all quests except completed ones. Are you sure? (yes/no)`;\n    if (quests.length > 0) {\n      message += `\\n\\n_${cancelCount} quest${cancelCount !== 1 ? 's' : ''} will be canceled and regenerated. ${doneCount} completed quest${doneCount !== 1 ? 's' : ''} will be kept._`;\n    }\n\n    return [{ json: {\n      response_type: 'info',\n      message,\n      data: { total: quests.length, will_cancel: cancelCount, will_keep: doneCount },\n      suggestions: ['yes', 'no'],\n      awaiting_input: true\n    }}];\n  }\n\n  if (confirmed === 'no' || confirmed === 'n') {\n    return [{ json: {\n      response_type: 'info',\n      message: '\\uD83D\\uDC4D Regeneration canceled. Your current quest board is unchanged.',\n      data: null,\n      suggestions: ['Type /today to see your quest board'],\n      awaiting_input: false\n    }}];\n  }\n\n  if (confirmed !== 'yes' && confirmed !== 'y') {\n    return [{ json: {\n      response_type: 'info',\n      message: '\\u26A0\\uFE0F Please answer \"yes\" or \"no\".',\n      data: null,\n      suggestions: ['yes', 'no'],\n      awaiting_input: true\n    }}];\n  }\n\n  // Phase 2: Cancel non-done quests, then trigger W1 re-execution\n  const result = await withRetry(\n    () => apiGet(`/projects/${projId}/issues/?per_page=100&expand=labels,state&target_date=${todayStr}`),\n    'Fetch today quests for regeneration'\n  );\n  const quests = result.results || result || [];\n  const nonDone = quests.filter(q => q.state_detail?.name !== 'Done');\n\n  let canceledCount = 0;\n  const nowStr = new Date().toLocaleTimeString('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit' });\n\n  for (const quest of nonDone) {\n    if (DRY_RUN) {\n      console.log(`[DRY_RUN] Would cancel issue ${quest.id} for regen`);\n    } else {\n      await withRetry(\n        () => apiPatch(`/projects/${projId}/issues/${quest.id}/`, { state: config.state_canceled }),\n        `Cancel issue ${quest.id} for regen`\n      );\n      await withRetry(\n        () => apiPost(`/projects/${projId}/issues/${quest.id}/comments/`, {\n          comment_html: `<p>\\uD83D\\uDD04 [${nowStr}] Canceled for quest regeneration</p>`\n        }),\n        `Comment on ${quest.id}`\n      );\n    }\n    canceledCount++;\n  }\n\n  // Now trigger W1 workflow re-execution\n  // W1 is a cron workflow — we trigger it by calling its test webhook or production webhook\n  // Since W1 runs as cron, we execute steps 1-2 inline (deterministic) here\n  // and steps 3-5 if LLM is available\n  // For simplicity and reliability, we re-run the same quest generation logic\n\n  // Step 2: Routine Copy — scan routines and create quests for today\n  const allProjects = await withRetry(\n    () => apiGet('/projects/'),\n    'Fetch all projects'\n  );\n  const projects = allProjects.results || allProjects || [];\n\n  // Get daily-routine label ID\n  const labelId = $env.PULSE_LABEL_DAILY_ROUTINE_ID;\n  let generated = 0;\n\n  for (const proj of projects) {\n    // Skip the daily quest project itself\n    if (proj.id === projId) continue;\n\n    try {\n      const issuesRes = await withRetry(\n        () => apiGet(`/projects/${proj.id}/issues/?per_page=100&expand=labels&label=${labelId}`),\n        `Scan routines in ${proj.name}`\n      );\n      const routines = issuesRes.results || issuesRes || [];\n\n      for (const routine of routines) {\n        // Check if routine has the daily-routine label\n        const hasLabel = routine.label_details?.some(l => l.id === labelId) || routine.labels?.includes(labelId);\n        if (!hasLabel) continue;\n\n        const meta = extractMeta(routine.description_html);\n        if (!meta || meta.schema_version !== 1) continue;\n\n        // Check schedule: routine_days\n        const dayMap = { 'sun': 0, 'mon': 1, 'tue': 2, 'wed': 3, 'thu': 4, 'fri': 5, 'sat': 6 };\n        const todayDow = new Date().toLocaleDateString('en-US', { timeZone: tz, weekday: 'short' }).toLowerCase();\n        const routineDays = (meta.routine_days || []).map(d => d.toLowerCase());\n        if (routineDays.length > 0 && !routineDays.includes(todayDow)) continue;\n\n        // Check active_from / active_until\n        if (meta.routine_active_from && todayStr < meta.routine_active_from) continue;\n        if (meta.routine_active_until && todayStr > meta.routine_active_until) continue;\n\n        // Check cooldown\n        if (meta.routine_cooldown_days && meta.routine_cooldown_days > 0) {\n          try {\n            const recentRes = await withRetry(\n              () => apiGet(`/projects/${projId}/issues/?per_page=5&expand=labels&target_date=${todayStr}`),\n              `Check cooldown for ${routine.name}`\n            );\n            const recent = recentRes.results || recentRes || [];\n            const hasDuplicate = recent.some(q => {\n              const qMeta = extractMeta(q.description_html);\n              return qMeta?.source_issue_id === routine.id;\n            });\n            if (hasDuplicate) continue;\n          } catch (e) {\n            console.log(`[WARN] Cooldown check failed: ${e.message}`);\n          }\n        }\n\n        // Duplicate check: skip if quest already exists for today from this routine\n        // (covered by cooldown check above for today's quests)\n\n        // Create quest\n        const questMeta = {\n          schema_version: 1,\n          routine_type: meta.routine_type || 'daily',\n          routine_days: meta.routine_days || [],\n          routine_time: meta.routine_time || '09:00',\n          routine_duration_min: meta.routine_duration_min || 30,\n          routine_priority: meta.routine_priority || 'medium',\n          routine_mandatory: meta.routine_mandatory || false,\n          routine_active_from: meta.routine_active_from,\n          routine_active_until: meta.routine_active_until,\n          routine_cooldown_days: meta.routine_cooldown_days || 0,\n          source_project_id: proj.id,\n          source_issue_id: routine.id,\n          defer_count: 0\n        };\n\n        const priorityMap = { 'urgent': 4, 'high': 3, 'medium': 2, 'low': 1, 'none': 0 };\n        const priority = priorityMap[meta.routine_priority] || 2;\n\n        const questBody = {\n          name: routine.name,\n          description_html: `<pre><code class=\"language-pulse-meta\">${JSON.stringify(questMeta, null, 2)}</code></pre>`,\n          priority,\n          state: config.state_todo,\n          target_date: todayStr,\n          start_date: todayStr,\n        };\n\n        if (DRY_RUN) {\n          console.log(`[DRY_RUN] Would create quest: ${routine.name}`);\n        } else {\n          await withRetry(\n            () => apiPost(`/projects/${projId}/issues/`, questBody),\n            `Create quest ${routine.name}`\n          );\n        }\n        generated++;\n      }\n    } catch (e) {\n      console.log(`[WARN] Failed to scan project ${proj.name}: ${e.message}`);\n    }\n  }\n\n  const dryTag = DRY_RUN ? ' [DRY_RUN]' : '';\n  return [{ json: {\n    response_type: 'confirmation',\n    message: `\\u2705${dryTag} Today's quests regenerated! ${canceledCount} quest${canceledCount !== 1 ? 's' : ''} canceled, ${generated} new quest${generated !== 1 ? 's' : ''} generated. Use /today to see the new board.`,\n    data: { canceled_count: canceledCount, generated_count: generated, dry_run: DRY_RUN },\n    suggestions: ['Type /today to see the new board'],\n    awaiting_input: false\n  }}];\n} catch (e) {\n  const code = e.errorCode || 'PLANE_API_ERROR';\n  const recovery = code === 'PLANE_API_TIMEOUT'\n    ? 'Please check Plane.so service status and try again later.'\n    : 'Please check Plane.so API configuration.';\n  return [{ json: {\n    response_type: 'error',\n    message: `\\u274C [${code}] ${e.message}. ${recovery}`,\n    data: { error_code: code },\n    suggestions: ['Check n8n execution logs'],\n    awaiting_input: false\n  }}];\n}"
+      },
+      "id": "w2-regen",
+      "name": "Code: /regen Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        1640
       ]
     }
   ],
@@ -580,6 +664,27 @@
         [
           {
             "node": "Code: /add Handler",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code: /restore Handler",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code: /edit Handler",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code: /regen Handler",
             "type": "main",
             "index": 0
           }
