@@ -76,7 +76,7 @@ development_status:
   4-3-deferred-view-deferred-quests: done
   4-4-preview-next-day-quest-dry-run: done
   4-5-weekly-weekly-summary-report: done
-  4-6-w3-daily-summary-reporter: backlog
+  4-6-w3-daily-summary-reporter: done
   epic-4-retrospective: optional
 
   # Epic 5: AI-Enhanced Quest Intelligence
