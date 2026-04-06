@@ -40,7 +40,96 @@
     },
     {
       "parameters": {
-        "content": "## W1 - Daily Quest Generator\n\n**Purpose:** Automatically generate daily quests from routine definitions at 00:00 KST.\n\n**Trigger:** Cron — daily at 00:00 KST.\n\n**Pipeline Steps:**\n1. Deferred Quest Migration — Move yesterday's incomplete quests to Deferred state\n2. Deterministic Routine Copy — Scan routines, create today's quests\n3. (Future) LLM Task Generation\n4. (Future) LLM Schedule Optimization\n5. (Future) LLM Deferred Restoration\n\n**Error Workflow:** W5 (error-handler)\n\n**DRY_RUN Behavior:**\n- Plane.so reads execute normally\n- Plane.so writes (create, update, comment) blocked and logged\n- LobeHub notifications blocked and logged",
+        "jsCode": "// ===========================================\n// W1 Execution Summary & Degraded Mode Check\n// ===========================================\n// Aggregates results from Steps 1-2, sets DEGRADED_MODE flag\n// (LLM steps 3-5 not yet implemented), builds execution summary.\n\nconst step2Result = $input.first().json;\nconst step1Data = step2Result.data?.step_1 || {};\nconst step2Data = step2Result.data || {};\nconst isDryRun = ($env.PULSE_DRY_RUN || 'false').toLowerCase() === 'true' || ($env.PULSE_DRY_RUN || '0') === '1';\nconst tz = $env.PULSE_USER_TIMEZONE || 'Asia/Seoul';\n\nconst startTime = new Date();\n\n// Steps 3-5 are not yet implemented → always degraded mode\nconst degradedMode = true;\nconst stepsCompleted = ['step_1_deferred_migration', 'step_2_routine_copy'];\nconst stepsSkipped = ['step_3_llm_task_generation', 'step_4_llm_schedule_optimization', 'step_5_llm_deferred_restoration'];\n\n// Build execution summary\nconst deferredCount = (step1Data.deferred_issues || []).length;\nconst createdCount = (step2Data.created_quests || []).length;\nconst warnings = step2Data.warnings || [];\nconst step1Errors = step2Result.metadata?.items_failed || 0;\n\nconst summary = {\n  today_date: step2Data.today_date,\n  start_time: startTime.toISOString(),\n  steps_completed: stepsCompleted,\n  steps_skipped: stepsSkipped,\n  deferred_count: deferredCount,\n  quests_created: createdCount,\n  warnings_count: warnings.length,\n  errors_count: step1Errors,\n  degraded_mode: degradedMode,\n  dry_run: isDryRun,\n};\n\n// Build notification message\nlet notification = '';\nif (degradedMode) {\n  notification = `\\u26A0\\uFE0F [DEGRADED_MODE] AI features temporarily unavailable. Routine-based quests generated normally.\\n`;\n}\nnotification += `\\uD83D\\uDCCB W1 Execution Summary — ${step2Data.today_date}:\\n`;\nnotification += `  Deferred: ${deferredCount} quests moved to Deferred\\n`;\nnotification += `  Created: ${createdCount} new quests\\n`;\nnotification += `  Steps: ${stepsCompleted.length} completed, ${stepsSkipped.length} skipped\\n`;\nif (warnings.length > 0) {\n  notification += `  Warnings: ${warnings.length}\\n`;\n}\nif (step1Errors > 0) {\n  notification += `  Errors: ${step1Errors}\\n`;\n}\n\nreturn [{\n  json: {\n    success: true,\n    data: {\n      summary,\n      notification,\n      degraded_mode: degradedMode,\n    },\n    error: null,\n    metadata: {\n      step: 'w1_execution_summary',\n      timestamp: new Date().toISOString(),\n      items_processed: deferredCount + createdCount,\n      items_failed: step1Errors,\n    }\n  }\n}];"
+      },
+      "id": "w1-summary",
+      "name": "Code: Execution Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check DRY_RUN before sending LobeHub notification\nconst isDryRun = ($env.PULSE_DRY_RUN || 'false').toLowerCase() === 'true' || ($env.PULSE_DRY_RUN || '0') === '1';\nconst data = $input.first().json.data;\n\nif (isDryRun) {\n  console.log(`[DRY_RUN] Would send W1 summary to LobeHub:\\n${data.notification}`);\n  return [{\n    json: {\n      dry_run: true,\n      message: `[DRY_RUN] Would send W1 execution summary`,\n      notification: data.notification,\n      should_notify: false,\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    should_notify: true,\n    notification: data.notification,\n    degraded_mode: data.degraded_mode,\n  }\n}];"
+      },
+      "id": "w1-dryrun-check",
+      "name": "Code: Check DRY_RUN Notify",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1260, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "should-notify",
+              "leftValue": "={{ $json.should_notify }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "w1-if-notify",
+      "name": "IF: Should Notify",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1480, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.PULSE_LOBEHUB_WEBHOOK_URL }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.PULSE_LOBEHUB_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"response_type\": \"info\",\n  \"message\": \"{{ $json.notification }}\",\n  \"data\": {\n    \"degraded_mode\": {{ $json.degraded_mode }}\n  },\n  \"suggestions\": [],\n  \"awaiting_input\": false\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "w1-notify",
+      "name": "Push: Notify LobeHub",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1700, 240],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// DRY_RUN: log notification skip\nconst data = $input.first().json;\nconsole.log(data.message);\nreturn [$input.first()];"
+      },
+      "id": "w1-dryrun-log",
+      "name": "Code: Log DRY_RUN Skip",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1700, 400]
+    },
+    {
+      "parameters": {
+        "content": "## W1 - Daily Quest Generator\n\n**Purpose:** Automatically generate daily quests from routine definitions at 00:00 KST.\n\n**Trigger:** Cron — daily at 00:00 KST.\n\n**Pipeline Steps:**\n1. Deferred Quest Migration — Move yesterday's incomplete quests to Deferred state\n2. Deterministic Routine Copy — Scan routines, create today's quests\n3. (Future) LLM Task Generation\n4. (Future) LLM Schedule Optimization\n5. (Future) LLM Deferred Restoration\n6. Execution Summary — Aggregate results, check degraded mode, notify LobeHub\n\n**Error Workflow:** W5 (error-handler)\n\n**DRY_RUN Behavior:**\n- Plane.so reads execute normally\n- Plane.so writes (create, update, comment) blocked and logged\n- LobeHub notifications blocked and logged",
         "height": 380,
         "width": 400
       },
@@ -63,6 +152,37 @@
       "main": [
         [
           { "node": "Code: Step 2 Routine Copy", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Code: Step 2 Routine Copy": {
+      "main": [
+        [
+          { "node": "Code: Execution Summary", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Code: Execution Summary": {
+      "main": [
+        [
+          { "node": "Code: Check DRY_RUN Notify", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Code: Check DRY_RUN Notify": {
+      "main": [
+        [
+          { "node": "IF: Should Notify", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "IF: Should Notify": {
+      "main": [
+        [
+          { "node": "Push: Notify LobeHub", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Code: Log DRY_RUN Skip", "type": "main", "index": 0 }
         ]
       ]
     }
