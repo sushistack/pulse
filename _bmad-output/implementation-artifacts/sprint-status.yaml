@@ -60,7 +60,7 @@ development_status:
   epic-2-retrospective: optional
 
   # Epic 3: Core Quest Interaction Commands
-  epic-3: in-progress
+  epic-3: done
   3-1-w2-command-router-and-response-formatter: done
   3-2-complete-interactive-quest-completion: done
   3-3-cancel-interactive-quest-cancellation: done
