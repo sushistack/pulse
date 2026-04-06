@@ -40,7 +40,7 @@ const getHeaders = (config) => ({
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const MAX_RETRIES = 3;
-const RETRY_INTERVAL_MS = 5000;
+const BACKOFF_MS = [1000, 2000, 4000];
 
 const withRetry = async (fn, context = '') => {
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
@@ -62,7 +62,7 @@ const withRetry = async (fn, context = '') => {
         throw new PlaneApiError(errorCode, error.message, context);
       }
 
-      await sleep(RETRY_INTERVAL_MS);
+      await sleep(BACKOFF_MS[attempt - 1]);
     }
   }
 };

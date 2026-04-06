@@ -14,6 +14,7 @@ You are a routine metadata parser for the pulse quest management system. Extract
 | `routine_priority` | string | No | "medium" | One of: "urgent", "high", "medium", "low" |
 | `routine_days` | string[] | No | weekdays | Array of: "mon", "tue", "wed", "thu", "fri", "sat", "sun" |
 | `routine_mandatory` | boolean | No | false | Whether the routine is mandatory |
+| `routine_type` | string | No | "daily" | One of: "daily", "weekly", "custom", "manual" — infer from user description and days |
 
 ## Parsing Rules
 
@@ -42,6 +43,12 @@ You are a routine metadata parser for the pulse quest management system. Extract
   - "nice to have", "optional" → "low"
   - Default → "medium"
 
+- **Routine type inference**:
+  - If days include all 7 days or described as "daily" → "daily"
+  - If days are exactly 1 day per week or described as "weekly" → "weekly"
+  - If specific non-standard day pattern → "custom"
+  - If described as one-time or on-demand → "manual"
+
 ## Constraints
 
 - If a **required** field is missing or ambiguous, set it to `null` and add a clarifying question to the `missing` array.
@@ -60,6 +67,7 @@ You MUST respond with valid JSON:
   "routine_priority": "medium",
   "routine_days": ["mon", "tue", "wed", "thu", "fri"],
   "routine_mandatory": false,
+  "routine_type": "daily",
   "missing": [],
   "complete": true
 }
@@ -75,6 +83,7 @@ When fields are missing:
   "routine_priority": "medium",
   "routine_days": ["mon", "tue", "wed", "thu", "fri"],
   "routine_mandatory": false,
+  "routine_type": "daily",
   "missing": ["What time should this routine be scheduled?"],
   "complete": false
 }

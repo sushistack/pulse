@@ -10,7 +10,7 @@
         "properties": {
           "action": {
             "type": "string",
-            "description": "The command to execute: today, complete, cancel, defer, restore, edit, add, regen, brief, stats, deferred, preview, weekly, help",
+            "description": "The command to execute: today, complete, cancel, defer, restore, edit, add, regen, brief, stats, deferred, preview, weekly, help, classify, create_routine",
             "enum": [
               "today",
               "complete",
