@@ -87,10 +87,10 @@ development_status:
   epic-5-retrospective: optional
 
   # Epic 6: Natural Language & Conversational Intelligence
-  epic-6: in-progress
+  epic-6: done
   6-1-natural-language-intent-classification: done
   6-2-natural-language-routine-creation: done
-  6-3-session-collision-handling: backlog
+  6-3-session-collision-handling: done
   epic-6-retrospective: optional
 
   # Epic 7: Advanced Quest Management & Maintenance
