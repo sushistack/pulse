@@ -1,0 +1,62 @@
+{
+  "name": "w1-daily-quest-generator",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 0,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "id": "w1-cron",
+      "name": "Cron: Daily 00:00 KST",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ===========================================\n// W1 Step 1: Deferred Quest Migration\n// ===========================================\n// Fetches today's quests with state \"To-Do\" and target_date before today,\n// moves them to \"Deferred\" state, increments defer_count.\n\nconst config = {\n  base_url: $env.PULSE_PLANE_BASE_URL,\n  workspace_slug: $env.PULSE_PLANE_WORKSPACE_SLUG,\n  api_key: $env.PULSE_PLANE_API_KEY,\n  daily_quest_project_id: $env.PULSE_DAILY_QUEST_PROJECT_ID,\n  states: {\n    todo: $env.PULSE_STATE_TODO_ID,\n    in_progress: $env.PULSE_STATE_IN_PROGRESS_ID,\n    deferred: $env.PULSE_STATE_DEFERRED_ID,\n    done: $env.PULSE_STATE_DONE_ID,\n    canceled: $env.PULSE_STATE_CANCELED_ID,\n  },\n};\n\nconst basePath = `${config.base_url}/api/v1/workspaces/${config.workspace_slug}`;\nconst headers = { 'X-API-Key': config.api_key, 'Content-Type': 'application/json' };\nconst isDryRun = ($env.PULSE_DRY_RUN || 'false').toLowerCase() === 'true' || ($env.PULSE_DRY_RUN || '0') === '1';\nconst tz = $env.PULSE_USER_TIMEZONE || 'Asia/Seoul';\n\n// Get today's date in KST\nconst now = new Date();\nconst todayStr = now.toLocaleDateString('en-CA', { timeZone: tz }); // YYYY-MM-DD\n\n// --- Retry helper ---\nconst sleep = (ms) => new Promise((r) => setTimeout(r, ms));\nconst MAX_RETRIES = 3;\nconst RETRY_MS = 5000;\n\nconst withRetry = async (fn, ctx) => {\n  for (let i = 1; i <= MAX_RETRIES; i++) {\n    try { return await fn(); } catch (e) {\n      console.log(`[RETRY] ${ctx} attempt ${i}/${MAX_RETRIES}: ${e.message}`);\n      if (i === MAX_RETRIES) throw e;\n      await sleep(RETRY_MS);\n    }\n  }\n};\n\nconst apiGet = async (path) => {\n  const res = await fetch(`${basePath}${path}`, { method: 'GET', headers });\n  if (!res.ok) throw new Error(`HTTP ${res.status}`);\n  return res.json();\n};\n\nconst apiPatch = async (path, body) => {\n  const res = await fetch(`${basePath}${path}`, { method: 'PATCH', headers, body: JSON.stringify(body) });\n  if (!res.ok) throw new Error(`HTTP ${res.status}`);\n  return res.json();\n};\n\nconst apiPost = async (path, body) => {\n  const res = await fetch(`${basePath}${path}`, { method: 'POST', headers, body: JSON.stringify(body) });\n  if (!res.ok) throw new Error(`HTTP ${res.status}`);\n  return res.json();\n};\n\n// --- Step 1 Logic ---\nconst projectId = config.daily_quest_project_id;\nlet itemsProcessed = 0;\nlet itemsFailed = 0;\nconst deferredIssues = [];\nconst existingSourceIds = new Set();\n\ntry {\n  // Fetch all issues in Daily Quests project with state To-Do\n  const todoIssues = await withRetry(\n    () => apiGet(`/projects/${projectId}/issues/?per_page=100&expand=labels,state&state=${config.states.todo}`),\n    'Fetch To-Do issues'\n  );\n\n  const issues = todoIssues.results || todoIssues || [];\n\n  // Also fetch today's existing quests for duplicate prevention data (passed to Step 2)\n  const todayIssues = await withRetry(\n    () => apiGet(`/projects/${projectId}/issues/?per_page=100&expand=labels,state&target_date=${todayStr}`),\n    'Fetch today issues'\n  );\n  const todayResults = todayIssues.results || todayIssues || [];\n  for (const issue of todayResults) {\n    // Extract source_issue_id from description pulse-meta if available\n    const metaMatch = (issue.description_html || '').match(/\"source_issue_id\"\\s*:\\s*\"([^\"]+)\"/);\n    if (metaMatch) existingSourceIds.add(metaMatch[1]);\n  }\n\n  // Filter: only issues with target_date before today\n  const overdueIssues = issues.filter((issue) => {\n    const targetDate = issue.target_date;\n    return targetDate && targetDate < todayStr;\n  });\n\n  // Process each overdue issue\n  for (const issue of overdueIssues) {\n    try {\n      // Extract current defer_count from description or default to 0\n      let deferCount = 0;\n      const countMatch = (issue.description_html || '').match(/\"defer_count\"\\s*:\\s*(\\d+)/);\n      if (countMatch) deferCount = parseInt(countMatch[1], 10);\n      deferCount += 1;\n\n      if (isDryRun) {\n        console.log(`[DRY_RUN] Would defer issue: \"${issue.name}\" (defer_count: ${deferCount})`);\n      } else {\n        // Move to Deferred state\n        await withRetry(\n          () => apiPatch(`/projects/${projectId}/issues/${issue.id}/`, { state: config.states.deferred }),\n          `Defer issue ${issue.id}`\n        );\n\n        // Add comment\n        const comment = `\\u23F3 [00:00] Auto-deferred: incomplete (count: ${deferCount})`;\n        await withRetry(\n          () => apiPost(`/projects/${projectId}/issues/${issue.id}/comments/`, { comment_html: `<p>${comment}</p>` }),\n          `Comment on ${issue.id}`\n        );\n      }\n\n      deferredIssues.push({ id: issue.id, name: issue.name, defer_count: deferCount });\n      itemsProcessed++;\n    } catch (e) {\n      console.log(`[ERROR] Failed to defer issue \"${issue.name}\": ${e.message}`);\n      itemsFailed++;\n    }\n  }\n\n  return [{\n    json: {\n      success: true,\n      data: {\n        deferred_issues: deferredIssues,\n        existing_source_ids: Array.from(existingSourceIds),\n        today_date: todayStr,\n      },\n      error: null,\n      metadata: {\n        step: 'step_1_deferred_migration',\n        timestamp: new Date().toISOString(),\n        items_processed: itemsProcessed,\n        items_failed: itemsFailed,\n        dry_run: isDryRun,\n      }\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      data: {\n        deferred_issues: deferredIssues,\n        existing_source_ids: Array.from(existingSourceIds),\n        today_date: todayStr,\n      },\n      error: { code: 'PLANE_API_ERROR', message: e.message },\n      metadata: {\n        step: 'step_1_deferred_migration',\n        timestamp: new Date().toISOString(),\n        items_processed: itemsProcessed,\n        items_failed: itemsFailed,\n        dry_run: isDryRun,\n      }\n    }\n  }];\n}"
+      },
+      "id": "w1-step1",
+      "name": "Code: Step 1 Deferred Migration",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "content": "## W1 - Daily Quest Generator\n\n**Purpose:** Automatically generate daily quests from routine definitions at 00:00 KST.\n\n**Trigger:** Cron — daily at 00:00 KST.\n\n**Pipeline Steps:**\n1. Deferred Quest Migration — Move yesterday's incomplete quests to Deferred state\n2. Deterministic Routine Copy — Scan routines, create today's quests\n3. (Future) LLM Task Generation\n4. (Future) LLM Schedule Optimization\n5. (Future) LLM Deferred Restoration\n\n**Error Workflow:** W5 (error-handler)\n\n**DRY_RUN Behavior:**\n- Plane.so reads execute normally\n- Plane.so writes (create, update, comment) blocked and logged\n- LobeHub notifications blocked and logged",
+        "height": 380,
+        "width": 400
+      },
+      "id": "w1-sticky",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [200, 520]
+    }
+  ],
+  "connections": {
+    "Cron: Daily 00:00 KST": {
+      "main": [
+        [
+          { "node": "Code: Step 1 Deferred Migration", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "w5-error-handler",
+    "timezone": "Asia/Seoul"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "pinData": {}
+}
