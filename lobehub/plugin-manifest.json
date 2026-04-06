@@ -2,7 +2,7 @@
   "identifier": "pulse-quest-manager",
   "api": [
     {
-      "url": "{{PULSE_N8N_WEBHOOK_URL}}",
+      "url": "https://n8n.eli.kr/webhook/pulse-command",
       "name": "quest_command",
       "description": "Execute a pulse quest management command. Routes to the n8n W2 webhook handler for all quest operations.",
       "parameters": {
@@ -63,7 +63,7 @@
       }
     }
   ],
-  "gateway": "{{PULSE_N8N_WEBHOOK_URL}}",
+  "gateway": "https://n8n.eli.kr/webhook/pulse-command",
   "version": "1",
   "settings": {
     "auth": {
