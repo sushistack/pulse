@@ -43,14 +43,19 @@ Epic {N}의 구현 코드를 리뷰해줘.
 
 Epic {N} 코드 리뷰에서 발견된 아래 항목들을 수정해줘.
 
-참고 파일:
+#### 참고 파일:
+
 - 에픽/스토리 정의: _bmad-output/planning-artifacts/epics.md
 - 아키텍처: _bmad-output/planning-artifacts/architecture.md
 - 스프린트 상태: _bmad-output/implementation-artifacts/sprint-status.yaml
 
-[여기에 코드 리뷰 결과의 수정 체크리스트를 붙여넣기]
+#### 리뷰 내용
 
-진행 규칙:
+```
+
+```
+
+#### 진행 규칙:
 1. critical → major → minor 순서로 수정
 2. 수정할 때 기존 동작을 깨뜨리지 않도록 주의
 3. 관련된 항목은 묶어서 한 커밋으로 처리
