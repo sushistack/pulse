@@ -1,0 +1,68 @@
+{
+  "identifier": "pulse-quest-manager",
+  "api": [
+    {
+      "url": "{{PULSE_N8N_WEBHOOK_URL}}",
+      "name": "quest_command",
+      "description": "Execute a pulse quest management command. Routes to the n8n W2 webhook handler for all quest operations.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "The command to execute: today, complete, cancel, defer, restore, edit, add, regen, brief, stats, deferred, preview, weekly, help",
+            "enum": [
+              "today",
+              "complete",
+              "cancel",
+              "defer",
+              "restore",
+              "edit",
+              "add",
+              "regen",
+              "brief",
+              "stats",
+              "deferred",
+              "preview",
+              "weekly",
+              "help"
+            ]
+          },
+          "target": {
+            "type": "string",
+            "description": "Optional target: quest number(s) for interactive commands (e.g., '1,3' or '1-3'), 'all' for /brief all, issue IDs for resolved selections"
+          },
+          "params": {
+            "type": "object",
+            "description": "Optional parameters: { days: number } for /stats, { name: string, duration: string } for /add, { field: string, value: string } for /edit",
+            "properties": {
+              "days": { "type": "number" },
+              "name": { "type": "string" },
+              "duration": { "type": "string" },
+              "field": { "type": "string" },
+              "value": { "type": "string" },
+              "priority": { "type": "string" }
+            }
+          }
+        },
+        "required": ["action"]
+      }
+    }
+  ],
+  "gateway": "{{PULSE_N8N_WEBHOOK_URL}}",
+  "version": "1",
+  "settings": {
+    "auth": {
+      "type": "header",
+      "header": {
+        "key": "X-API-Key",
+        "value": "{{PULSE_N8N_WEBHOOK_SECRET}}"
+      }
+    }
+  },
+  "meta": {
+    "title": "pulse Quest Manager",
+    "description": "Daily quest management system powered by Plane.so and n8n",
+    "avatar": "📋"
+  }
+}

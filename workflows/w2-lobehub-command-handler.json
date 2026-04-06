@@ -1,0 +1,214 @@
+{
+  "name": "w2-lobehub-command-handler",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "pulse-command",
+        "authentication": "headerAuth",
+        "options": {
+          "responseMode": "lastNode"
+        }
+      },
+      "id": "w2-webhook",
+      "name": "Webhook: Command Entry",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "pulse-command"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ===========================================\n// W2 Command Router\n// ===========================================\n// Validates API key, extracts action, routes to handler.\n\nconst body = $input.first().json.body || $input.first().json;\nconst action = (body.action || '').toLowerCase().trim();\nconst target = body.target || null;\nconst params = body.params || {};\n\n// Valid actions\nconst validActions = [\n  'today', 'complete', 'cancel', 'defer', 'restore', 'edit',\n  'add', 'regen', 'brief', 'stats', 'deferred', 'preview',\n  'weekly', 'help', 'ping'\n];\n\nif (!validActions.includes(action)) {\n  return [{\n    json: {\n      response_type: 'error',\n      message: `\\u274C [UNKNOWN_COMMAND] Unknown command '${action}'. Type /help for available commands.`,\n      data: { error_code: 'UNKNOWN_COMMAND' },\n      suggestions: ['Type /help for available commands'],\n      awaiting_input: false,\n      _route: 'error'\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    action,\n    target,\n    params,\n    _route: action\n  }\n}];"
+      },
+      "id": "w2-router",
+      "name": "Code: Command Router",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json._route }}",
+                    "rightValue": "today",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "outputKey": "today"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json._route }}",
+                    "rightValue": "help",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "outputKey": "help"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json._route }}",
+                    "rightValue": "ping",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "outputKey": "ping"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json._route }}",
+                    "rightValue": "error",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "outputKey": "error"
+            }
+          ],
+          "fallbackOutput": {
+            "conditions": {},
+            "outputKey": "unimplemented"
+          }
+        },
+        "options": {}
+      },
+      "id": "w2-switch",
+      "name": "Switch: Route Command",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [720, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ===========================================\n// /today — Quest Board View\n// ===========================================\n// Queries Daily Quests project for today's issues,\n// formats response grouped by state buckets.\n\nconst config = {\n  base_url: $env.PULSE_PLANE_BASE_URL,\n  workspace_slug: $env.PULSE_PLANE_WORKSPACE_SLUG,\n  api_key: $env.PULSE_PLANE_API_KEY,\n  daily_quest_project_id: $env.PULSE_DAILY_QUEST_PROJECT_ID,\n};\n\nconst basePath = `${config.base_url}/api/v1/workspaces/${config.workspace_slug}`;\nconst headers = { 'X-API-Key': config.api_key, 'Content-Type': 'application/json' };\nconst tz = $env.PULSE_USER_TIMEZONE || 'Asia/Seoul';\n\n// --- Retry helper ---\nconst sleep = (ms) => new Promise((r) => setTimeout(r, ms));\nconst MAX_RETRIES = 3;\nconst RETRY_MS = 5000;\nconst withRetry = async (fn, ctx) => {\n  for (let i = 1; i <= MAX_RETRIES; i++) {\n    try { return await fn(); } catch (e) {\n      console.log(`[RETRY] ${ctx} attempt ${i}/${MAX_RETRIES}: ${e.message}`);\n      if (i === MAX_RETRIES) throw e;\n      await sleep(RETRY_MS);\n    }\n  }\n};\n\nconst apiGet = async (path) => {\n  const res = await fetch(`${basePath}${path}`, { method: 'GET', headers });\n  if (!res.ok) throw new Error(`HTTP ${res.status}`);\n  return res.json();\n};\n\n// --- Meta extractor ---\nconst decodeEntities = (s) => s.replace(/&quot;/g, '\"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');\nconst extractMeta = (html) => {\n  if (!html) return null;\n  try {\n    let m = html.match(/<pre><code\\s+class=\"language-pulse-meta\">([\\s\\S]*?)<\\/code><\\/pre>/);\n    if (m) return JSON.parse(decodeEntities(m[1].trim()));\n    m = html.match(/<pre><code>([\\s\\S]*?)<\\/code><\\/pre>/);\n    if (m) { const c = decodeEntities(m[1].trim()); if (c.includes('\"schema_version\"')) return JSON.parse(c); }\n    m = html.match(/```pulse-meta\\s*\\n([\\s\\S]*?)\\n\\s*```/);\n    if (m) return JSON.parse(m[1].trim());\n  } catch (e) { return null; }\n  return null;\n};\n\n// --- Priority ---\nconst PRIORITY_EMOJI = { 4: '\\uD83D\\uDD34', 3: '\\uD83D\\uDFE0', 2: '\\uD83D\\uDFE1', 1: '\\uD83D\\uDFE2', 0: '\\uD83D\\uDFE2' };\nconst PRIORITY_NAME = { 4: 'urgent', 3: 'high', 2: 'medium', 1: 'low', 0: 'none' };\nconst formatDuration = (min) => {\n  if (!min) return '';\n  if (min >= 60) { const h = Math.floor(min / 60); const m = min % 60; return m > 0 ? `${h}h${m}min` : `${h}h`; }\n  return `${min}min`;\n};\n\n// --- State config ---\nconst STATE_ORDER = ['To-Do', 'In Progress', 'Deferred', 'Done', 'Canceled'];\nconst STATE_EMOJI = { 'To-Do': '\\uD83D\\uDCCB', 'In Progress': '\\u23F3', 'Deferred': '\\u23F8\\uFE0F', 'Done': '\\u2705', 'Canceled': '\\uD83D\\uDEAB' };\n\ntry {\n  const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: tz });\n  const dayName = new Date().toLocaleDateString('en-US', { timeZone: tz, weekday: 'short' });\n\n  // Fetch today's quests\n  const result = await withRetry(\n    () => apiGet(`/projects/${config.daily_quest_project_id}/issues/?per_page=100&expand=labels,state&target_date=${todayStr}`),\n    'Fetch today quests'\n  );\n  const quests = result.results || result || [];\n\n  // Group by state\n  const grouped = {};\n  for (const s of STATE_ORDER) grouped[s] = [];\n\n  for (const q of quests) {\n    const stateName = q.state_detail?.name || 'To-Do';\n    if (!grouped[stateName]) grouped[stateName] = [];\n    grouped[stateName].push(q);\n  }\n\n  // Format header\n  let header = `\\uD83D\\uDCCB ${todayStr} (${dayName}) Today's Quests`;\n\n  // Build body\n  let body = '';\n  for (const state of STATE_ORDER) {\n    const items = grouped[state];\n    if (!items || items.length === 0) continue;\n    const emoji = STATE_EMOJI[state] || '';\n    body += `\\n${emoji} **${state}** (${items.length})\\n`;\n    for (const q of items) {\n      const pEmoji = PRIORITY_EMOJI[q.priority] || '\\uD83D\\uDFE1';\n      const meta = extractMeta(q.description_html);\n      const time = meta?.routine_time || '--:--';\n      const dur = meta?.routine_duration_min ? formatDuration(meta.routine_duration_min) : '';\n      const deferSuffix = meta?.defer_count > 0 ? ` (deferred x${meta.defer_count})` : '';\n      body += `  ${pEmoji} ${q.name} \\u2014 ${time}${dur ? ` (${dur})` : ''}${deferSuffix}\\n`;\n    }\n  }\n\n  if (quests.length === 0) {\n    body = '\\n_No quests for today. Enjoy your free day!_\\n';\n  }\n\n  return [{\n    json: {\n      response_type: 'quest_board',\n      message: `${header}\\n${body}`,\n      data: {\n        total: quests.length,\n        by_state: Object.fromEntries(STATE_ORDER.map((s) => [s, (grouped[s] || []).length])),\n      },\n      suggestions: [],\n      awaiting_input: false,\n    }\n  }];\n} catch (e) {\n  return [{\n    json: {\n      response_type: 'error',\n      message: `\\u274C [PLANE_API_ERROR] Failed to fetch today's quests: ${e.message}. Please check Plane.so API configuration.`,\n      data: { error_code: 'PLANE_API_ERROR' },\n      suggestions: ['Check n8n execution logs', 'Verify Plane.so connectivity'],\n      awaiting_input: false,\n    }\n  }];\n}"
+      },
+      "id": "w2-today",
+      "name": "Code: /today Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 140]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ===========================================\n// /help — Command Reference\n// ===========================================\n\nconst helpText = `\\uD83D\\uDCDA **pulse Command Reference**\n\n**\\uD83D\\uDD0D Query Commands**\n  \\u2022 \\`/today\\` \\u2014 View today's quest board\n  \\u2022 \\`/brief\\` \\u2014 View top 5 milestone briefings\n  \\u2022 \\`/brief all\\` \\u2014 View all milestones\n  \\u2022 \\`/stats {N}\\` \\u2014 View N-day statistics (default: 7)\n  \\u2022 \\`/deferred\\` \\u2014 View all deferred quests\n  \\u2022 \\`/preview\\` \\u2014 Preview tomorrow's quests\n  \\u2022 \\`/weekly\\` \\u2014 Weekly summary report\n\n**\\u2705 Interactive Commands**\n  \\u2022 \\`/complete\\` \\u2014 Mark quests as completed\n  \\u2022 \\`/cancel\\` \\u2014 Cancel quests\n  \\u2022 \\`/defer\\` \\u2014 Defer quests to later\n  \\u2022 \\`/restore\\` \\u2014 Restore deferred quests\n  \\u2022 \\`/edit\\` \\u2014 Edit quest time or priority\n\n**\\u26A1 Action Commands**\n  \\u2022 \\`/add {name} {duration}\\` \\u2014 Add a manual quest\n  \\u2022 \\`/regen\\` \\u2014 Regenerate today's quests\n\n_Tip: Interactive commands show a numbered list. Reply with numbers to select (e.g., 1,3 or 1-3)._`;\n\nreturn [{\n  json: {\n    response_type: 'info',\n    message: helpText,\n    data: null,\n    suggestions: [],\n    awaiting_input: false,\n  }\n}];"
+      },
+      "id": "w2-help",
+      "name": "Code: /help Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Ping handler for connectivity test\nreturn [{\n  json: {\n    response_type: 'info',\n    message: 'pong',\n    data: { status: 'ok', timestamp: new Date().toISOString() },\n    suggestions: [],\n    awaiting_input: false,\n  }\n}];"
+      },
+      "id": "w2-ping",
+      "name": "Code: Ping Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 460]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pass through error response from router\nreturn [$input.first()];"
+      },
+      "id": "w2-error-pass",
+      "name": "Code: Error Passthrough",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 620]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Unimplemented command handler\nconst action = $input.first().json.action || 'unknown';\nreturn [{\n  json: {\n    response_type: 'info',\n    message: `\\u2139\\uFE0F Command /${action} is not yet implemented. It will be available in a future update.`,\n    data: { action },\n    suggestions: ['Type /help for available commands', 'Try /today to view your quest board'],\n    awaiting_input: false,\n  }\n}];"
+      },
+      "id": "w2-unimplemented",
+      "name": "Code: Unimplemented Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 780]
+    },
+    {
+      "parameters": {
+        "content": "## W2 - LobeHub Command Handler\n\n**Purpose:** Handle all slash commands from LobeHub via webhook.\n\n**Trigger:** Webhook — HTTP POST with X-API-Key auth.\n\n**Implemented Commands:**\n- /today — Quest board view\n- /help — Command reference\n- ping — Connectivity test\n\n**Pending Commands (Epic 3+):**\n- /complete, /cancel, /defer, /restore, /edit\n- /add, /regen\n- /brief, /stats, /deferred, /preview, /weekly\n\n**Error Workflow:** W5 (error-handler)\n\n**Response Format:** Standard JSON: response_type, message, data, suggestions, awaiting_input",
+        "height": 380,
+        "width": 400
+      },
+      "id": "w2-sticky",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [200, 520]
+    }
+  ],
+  "connections": {
+    "Webhook: Command Entry": {
+      "main": [
+        [
+          { "node": "Code: Command Router", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Code: Command Router": {
+      "main": [
+        [
+          { "node": "Switch: Route Command", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Switch: Route Command": {
+      "main": [
+        [
+          { "node": "Code: /today Handler", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Code: /help Handler", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Code: Ping Handler", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Code: Error Passthrough", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Code: Unimplemented Handler", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "w5-error-handler"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "pinData": {}
+}

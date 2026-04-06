@@ -51,12 +51,12 @@ development_status:
   epic-1-retrospective: optional
 
   # Epic 2: Daily Quest Generation & Board View
-  epic-2: in-progress
+  epic-2: done
   2-1-plane-so-api-helper-and-pulse-meta-parser: done
   2-2-w1-step-1-deferred-quest-migration: done
   2-3-w1-step-2-deterministic-routine-copy: done
   2-4-w1-degraded-mode-and-execution-summary: done
-  2-5-lobehub-agent-setup-and-today-command: backlog
+  2-5-lobehub-agent-setup-and-today-command: done
   epic-2-retrospective: optional
 
   # Epic 3: Core Quest Interaction Commands
