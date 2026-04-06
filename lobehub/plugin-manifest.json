@@ -26,7 +26,9 @@
               "preview",
               "weekly",
               "help",
-              "ping"
+              "ping",
+              "classify",
+              "create_routine"
             ]
           },
           "target": {
@@ -35,14 +37,25 @@
           },
           "params": {
             "type": "object",
-            "description": "Optional parameters: { days: number } for /stats, { name: string, duration: string } for /add, { field: string, value: string } for /edit",
+            "description": "Optional parameters: { days: number } for /stats, { name: string, duration: string } for /add, { field: string, value: string } for /edit, { message: string } for /classify and /create_routine, routine fields for /create_routine confirm",
             "properties": {
               "days": { "type": "number" },
               "name": { "type": "string" },
               "duration": { "type": "string" },
               "field": { "type": "string" },
               "value": { "type": "string" },
-              "priority": { "type": "string" }
+              "priority": { "type": "string" },
+              "message": { "type": "string", "description": "Natural language input for /classify or /create_routine" },
+              "active_session": { "type": "boolean", "description": "Whether an interactive session is active (for /classify)" },
+              "session_action": { "type": "string", "description": "The active session's action (for /classify)" },
+              "routine_name": { "type": "string", "description": "Routine name (for /create_routine confirm)" },
+              "routine_time": { "type": "string", "description": "Routine time HH:MM (for /create_routine confirm)" },
+              "routine_duration_min": { "type": "number", "description": "Duration in minutes (for /create_routine confirm)" },
+              "routine_priority": { "type": "string", "description": "Priority level (for /create_routine confirm)" },
+              "routine_days": { "type": "array", "items": { "type": "string" }, "description": "Days of week (for /create_routine confirm)" },
+              "routine_mandatory": { "type": "boolean", "description": "Whether routine is mandatory (for /create_routine confirm)" },
+              "add_today": { "type": "boolean", "description": "Whether to add to today's quests (for /create_routine confirm)" },
+              "target_project_id": { "type": "string", "description": "Target Plane.so project ID (for /create_routine confirm)" }
             }
           }
         },
