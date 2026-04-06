@@ -25,7 +25,8 @@
               "deferred",
               "preview",
               "weekly",
-              "help"
+              "help",
+              "ping"
             ]
           },
           "target": {

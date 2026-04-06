@@ -5,7 +5,12 @@
 // Plane.so issue description_html fields.
 // Handles 4 extraction patterns (F-4).
 
+const path = require('path');
 const { INVALID_ROUTINE_META } = require('./error-codes');
+
+// --- Load Schema from JSON file ---
+const schemaPath = path.resolve(__dirname, '..', 'schemas', 'pulse-meta.schema.json');
+const SCHEMA_JSON = require(schemaPath);
 
 // --- Extraction Patterns (F-4) ---
 
@@ -61,26 +66,14 @@ const decodeHtmlEntities = (str) =>
     .replace(/&#39;/g, "'")
     .replace(/&apos;/g, "'");
 
-// --- Schema Validation ---
+// --- Schema Validation (derived from schemas/pulse-meta.schema.json) ---
 
 const SCHEMA = {
-  required: [
-    'schema_version',
-    'routine_type',
-    'routine_days',
-    'routine_time',
-    'routine_duration_min',
-    'routine_priority',
-    'routine_mandatory',
-    'routine_active_from',
-    'routine_cooldown_days',
-    'source_project_id',
-    'source_issue_id',
-  ],
+  required: SCHEMA_JSON.required,
   enums: {
-    routine_type: ['daily', 'weekly', 'custom'],
-    routine_priority: ['urgent', 'high', 'medium', 'low'],
-    routine_days_items: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'],
+    routine_type: SCHEMA_JSON.properties.routine_type.enum,
+    routine_priority: SCHEMA_JSON.properties.routine_priority.enum,
+    routine_days_items: SCHEMA_JSON.properties.routine_days.items.enum,
   },
 };
 

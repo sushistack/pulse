@@ -330,8 +330,8 @@ All 14 decisions below are confirmed and block implementation if unresolved.
 - Applies to: pulse-meta, n8n inter-node data, webhook responses, DeepSeek prompt variables
 
 **N-3: Environment Variable Naming**
-- Pattern: `{SERVICE}_{PROPERTY}` in `UPPER_SNAKE_CASE`
-- Examples: `PLANE_BASE_URL`, `DEEPSEEK_API_KEY`, `USER_TIMEZONE`, `DRY_RUN`
+- Pattern: `PULSE_{SERVICE}_{PROPERTY}` in `UPPER_SNAKE_CASE`
+- Examples: `PULSE_PLANE_BASE_URL`, `PULSE_DEEPSEEK_API_KEY`, `PULSE_USER_TIMEZONE`, `PULSE_DRY_RUN`
 
 **N-4: JavaScript Coding Conventions**
 - `const` by default, `let` only when reassignment needed, `var` forbidden

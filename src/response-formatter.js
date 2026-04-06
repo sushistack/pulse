@@ -143,7 +143,7 @@ const formatInteractiveList = (quests, prompt = 'Enter number(s) (e.g., 1,3 or 1
 const extractQuestMeta = (descriptionHtml) => {
   if (!descriptionHtml) return null;
   try {
-    const decodeEntities = (s) => s.replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+    const decodeEntities = (s) => s.replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'").replace(/&apos;/g, "'");
     let m = descriptionHtml.match(/<pre><code\s+class="language-pulse-meta">([\s\S]*?)<\/code><\/pre>/);
     if (m) return JSON.parse(decodeEntities(m[1].trim()));
     m = descriptionHtml.match(/<pre><code>([\s\S]*?)<\/code><\/pre>/);
