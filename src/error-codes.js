@@ -49,6 +49,13 @@ const RECOVERY = {
   [LABEL_MISMATCH]: 'Please verify the label name matches "daily-routine" exactly.',
   [UNKNOWN_COMMAND]: 'Type /help for available commands.',
   [INVALID_INPUT]: 'Please check input format and try again.',
+  [DUPLICATE_QUEST]: 'A quest for this routine already exists today. No action needed.',
+  [QUEST_NOT_FOUND]: 'The referenced quest could not be found in Plane.so. Verify the issue ID.',
+  [AMBIGUOUS_MATCH]: 'Multiple matches found. Please refine your search with more specific terms.',
+  [SESSION_EXPIRED]: 'Session has expired. Please start a new conversation.',
+  [DEGRADED_MODE]: 'System is operating in degraded mode. Some features may be unavailable.',
+  [ENV_VALIDATION_FAILED]: 'One or more required environment variables are missing. Run W0 to diagnose.',
+  [W0_VALIDATION_FAILED]: 'Environment validation failed. Check W0 output for details.',
   [N8N_UNREACHABLE]: 'Please check n8n service status.',
   [LOBEHUB_PUSH_FAILED]: 'LobeHub notification delivery failed. Check LobeHub service.',
 };

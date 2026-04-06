@@ -22,8 +22,19 @@
     {
       "parameters": {
         "url": "={{ $env.PULSE_PLANE_BASE_URL }}/api/v1/workspaces/{{ $env.PULSE_PLANE_WORKSPACE_SLUG }}/projects/",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.PULSE_PLANE_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
         "options": {
           "timeout": 10000
         }

@@ -7,6 +7,7 @@
 #
 # Prerequisites:
 #   - PULSE_PLANE_API_KEY, PULSE_PLANE_BASE_URL, PULSE_PLANE_WORKSPACE_SLUG set in .env
+#   - jq installed (https://jqlang.github.io/jq/)
 #
 # Usage:
 #   ./scripts/setup.sh
@@ -22,6 +23,12 @@ if [[ -f "$PROJECT_ROOT/.env" ]]; then
   # shellcheck disable=SC1091
   source "$PROJECT_ROOT/.env"
   set +a
+fi
+
+# --- Check prerequisites ---
+if ! command -v jq &> /dev/null; then
+  echo "ERROR: jq is required but not installed. Install it via: brew install jq (macOS) or apt-get install jq (Linux)"
+  exit 1
 fi
 
 # --- Validate required env vars ---
@@ -74,23 +81,23 @@ echo "=== pulse Plane.so Setup ==="
 echo ""
 
 # --- Step 1: Validate API connectivity ---
-echo "[1/4] Validating Plane.so API connectivity..."
+echo "[1/5] Validating Plane.so API connectivity..."
 api_call GET "/projects/" > /dev/null
 echo "  OK - API connection successful"
 
 # --- Step 2: Create "Daily Quests" project ---
-echo "[2/4] Creating 'Daily Quests' project..."
+echo "[2/5] Creating 'Daily Quests' project..."
 PROJECT_RESPONSE=$(api_call POST "/projects/" '{
   "name": "Daily Quests",
   "description": "Auto-generated daily quest board managed by pulse",
   "network": 0,
   "identifier": "DQ"
 }')
-PROJECT_ID=$(echo "$PROJECT_RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+PROJECT_ID=$(echo "$PROJECT_RESPONSE" | jq -r '.id')
 echo "  OK - Project created: $PROJECT_ID"
 
 # --- Step 3: Create custom states ---
-echo "[3/4] Creating custom states..."
+echo "[3/5] Creating custom states..."
 
 declare -A STATE_IDS
 
@@ -106,7 +113,7 @@ create_state() {
     \"group\": \"$group\",
     \"color\": \"$color\"
   }")
-  STATE_IDS[$key]=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+  STATE_IDS[$key]=$(echo "$response" | jq -r '.id')
   echo "  OK - State '$name' ($group): ${STATE_IDS[$key]}"
 }
 
@@ -117,13 +124,79 @@ create_state "Done"         "completed"  "#16a34a" "DONE"
 create_state "Canceled"     "cancelled"  "#ef4444" "CANCELED"
 
 # --- Step 4: Create daily-routine label ---
-echo "[4/4] Creating 'daily-routine' label..."
+echo "[4/5] Creating 'daily-routine' label..."
 LABEL_RESPONSE=$(api_call POST "/projects/${PROJECT_ID}/labels/" '{
   "name": "daily-routine",
   "color": "#8b5cf6"
 }')
-LABEL_ID=$(echo "$LABEL_RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+LABEL_ID=$(echo "$LABEL_RESPONSE" | jq -r '.id')
 echo "  OK - Label 'daily-routine': $LABEL_ID"
+
+# --- Step 5: Create sample routine issues ---
+echo "[5/5] Creating sample routine issues..."
+
+PULSE_META_TEMPLATE='{
+  "schema_version": 1,
+  "routine_type": "%s",
+  "routine_days": %s,
+  "routine_time": "%s",
+  "routine_duration_min": %d,
+  "routine_priority": "%s",
+  "routine_mandatory": %s,
+  "routine_active_from": "%s",
+  "routine_active_until": null,
+  "routine_cooldown_days": 0,
+  "source_project_id": "%s",
+  "source_issue_id": ""
+}'
+
+TODAY=$(date +%Y-%m-%d)
+
+create_sample_routine() {
+  local name="$1"
+  local routine_type="$2"
+  local days="$3"
+  local time="$4"
+  local duration="$5"
+  local priority="$6"
+  local mandatory="$7"
+
+  # Build pulse-meta JSON
+  # shellcheck disable=SC2059
+  local meta
+  meta=$(printf "$PULSE_META_TEMPLATE" \
+    "$routine_type" "$days" "$time" "$duration" "$priority" "$mandatory" "$TODAY" "$PROJECT_ID")
+
+  local description
+  description=$(printf '### pulse-meta\n```json\n%s\n```' "$meta")
+
+  local response
+  response=$(api_call POST "/projects/${PROJECT_ID}/issues/" "$(jq -n \
+    --arg name "$name" \
+    --arg desc "$description" \
+    --arg state "${STATE_IDS[TODO]}" \
+    --arg label "$LABEL_ID" \
+    '{name: $name, description: $desc, state: $state, labels: [$label]}')")
+
+  local issue_id
+  issue_id=$(echo "$response" | jq -r '.id')
+
+  # Backfill source_issue_id in the description
+  meta=$(echo "$meta" | jq --arg iid "$issue_id" '.source_issue_id = $iid')
+  description=$(printf '### pulse-meta\n```json\n%s\n```' "$meta")
+  api_call PATCH "/projects/${PROJECT_ID}/issues/${issue_id}/" "$(jq -n \
+    --arg desc "$description" \
+    '{description: $desc}')" > /dev/null
+
+  echo "  OK - Sample routine '$name': $issue_id"
+}
+
+create_sample_routine "Morning Stretch" \
+  "daily" '["mon","tue","wed","thu","fri"]' "07:00" 15 "medium" "true"
+create_sample_routine "Weekly Review" \
+  "weekly" '["fri"]' "17:00" 30 "high" "true"
+create_sample_routine "Read Tech Articles" \
+  "weekly" '["tue","thu","sat"]' "21:00" 30 "low" "false"
 
 # --- Output summary ---
 echo ""

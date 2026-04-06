@@ -17,13 +17,13 @@ const dryRunLog = (action) => {
   return `[DRY_RUN] Would ${action}`;
 };
 
-const guardWrite = (action, executeFn) => {
+const guardWrite = async (action, executeFn) => {
   if (isDryRun()) {
     const message = dryRunLog(action);
     console.log(message);
     return { dry_run: true, message, skipped: true };
   }
-  return executeFn();
+  return await executeFn();
 };
 
 module.exports = {
