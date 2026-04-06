@@ -186,6 +186,21 @@
                 ]
               },
               "outputKey": "stats"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json._route }}",
+                    "rightValue": "deferred",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "outputKey": "deferred"
             }
           ],
           "fallbackOutput": {
@@ -336,6 +351,19 @@
     },
     {
       "parameters": {
+        "jsCode": "// ===========================================\n// /deferred — View Deferred Quests\n// ===========================================\n// Lists all quests currently in Deferred state with defer counts.\n// Highlights quests with defer_count >= 5.\n\nconst config = {\n  base_url: $env.PULSE_PLANE_BASE_URL,\n  workspace_slug: $env.PULSE_PLANE_WORKSPACE_SLUG,\n  api_key: $env.PULSE_PLANE_API_KEY,\n  daily_quest_project_id: $env.PULSE_DAILY_QUEST_PROJECT_ID,\n  state_deferred: $env.PULSE_STATE_DEFERRED_ID,\n};\n\nconst basePath = `${config.base_url}/api/v1/workspaces/${config.workspace_slug}`;\nconst headers = { 'X-API-Key': config.api_key, 'Content-Type': 'application/json' };\nconst tz = $env.PULSE_USER_TIMEZONE || 'Asia/Seoul';\n\nconst sleep = (ms) => new Promise((r) => setTimeout(r, ms));\nconst MAX_RETRIES = 3;\nconst RETRY_MS = 5000;\nconst withRetry = async (fn, ctx) => {\n  for (let i = 1; i <= MAX_RETRIES; i++) {\n    try { return await fn(); } catch (e) {\n      console.log(`[RETRY] ${ctx} attempt ${i}/${MAX_RETRIES}: ${e.message}`);\n      if (i === MAX_RETRIES) {\n        const isTimeout = e.code === 'ETIMEDOUT' || e.code === 'ECONNABORTED' || e.message?.includes('timeout');\n        const errorCode = isTimeout ? 'PLANE_API_TIMEOUT' : 'PLANE_API_ERROR';\n        const err = new Error(`[${errorCode}] ${ctx}: ${e.message}`);\n        err.errorCode = errorCode;\n        throw err;\n      }\n      await sleep(RETRY_MS);\n    }\n  }\n};\n\nconst apiGet = async (path) => {\n  const res = await fetch(`${basePath}${path}`, { method: 'GET', headers });\n  if (!res.ok) throw new Error(`HTTP ${res.status}`);\n  return res.json();\n};\n\nconst decodeEntities = (s) => s.replace(/&quot;/g, '\"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, \"'\").replace(/&apos;/g, \"'\");\nconst extractMeta = (html) => {\n  if (!html) return null;\n  try {\n    let m = html.match(/<pre><code\\s+class=\"language-pulse-meta\">([\\s\\S]*?)<\\/code><\\/pre>/);\n    if (m) return JSON.parse(decodeEntities(m[1].trim()));\n    m = html.match(/<pre><code>([\\s\\S]*?)<\\/code><\\/pre>/);\n    if (m) { const c = decodeEntities(m[1].trim()); if (c.includes('\"schema_version\"')) return JSON.parse(c); }\n    m = html.match(/```pulse-meta\\s*\\n([\\s\\S]*?)\\n\\s*```/);\n    if (m) return JSON.parse(m[1].trim());\n  } catch (e) { return null; }\n  return null;\n};\n\ntry {\n  const projId = config.daily_quest_project_id;\n\n  // Fetch all deferred issues\n  const result = await withRetry(\n    () => apiGet(`/projects/${projId}/issues/?per_page=100&expand=labels,state&state=${config.state_deferred}`),\n    'Fetch deferred quests'\n  );\n  const deferred = result.results || result || [];\n\n  if (deferred.length === 0) {\n    return [{ json: {\n      response_type: 'info',\n      message: '\\u2139\\uFE0F No deferred quests found. All clear!',\n      data: null,\n      suggestions: ['Try /today to view your quest board'],\n      awaiting_input: false\n    }}];\n  }\n\n  let message = `\\u23F8\\uFE0F **Deferred Quests** (${deferred.length})\\n\\n`;\n\n  for (const issue of deferred) {\n    const meta = extractMeta(issue.description_html);\n    const deferCount = meta?.defer_count || 0;\n    const sourceProject = meta?.source_project_id || 'unknown';\n    const originalDate = issue.target_date || 'unknown';\n\n    let line = `  \\u23F8\\uFE0F ${issue.name}`;\n    if (originalDate !== 'unknown') line += ` (${originalDate})`;\n    line += ` \\u2014 deferred x${deferCount}`;\n\n    if (deferCount >= 5) {\n      line += `\\n    \\u26A0\\uFE0F (deferred x${deferCount} \\u2014 consider removing)`;\n    }\n\n    message += line + '\\n';\n  }\n\n  message += '\\n_Use /restore to bring quests back, or /cancel to remove them._';\n\n  return [{ json: {\n    response_type: 'info',\n    message,\n    data: { count: deferred.length, quests: deferred.map(d => ({ id: d.id, name: d.name, defer_count: extractMeta(d.description_html)?.defer_count || 0 })) },\n    suggestions: ['/restore', '/cancel'],\n    awaiting_input: false\n  }}];\n} catch (e) {\n  const code = e.errorCode || 'PLANE_API_ERROR';\n  const recovery = code === 'PLANE_API_TIMEOUT'\n    ? 'Please check Plane.so service status and try again later.'\n    : 'Please check Plane.so API configuration.';\n  return [{ json: {\n    response_type: 'error',\n    message: `\\u274C [W2-DEFERRED] [${code}] ${e.message}. ${recovery}`,\n    data: { error_code: code },\n    suggestions: ['Check n8n execution logs'],\n    awaiting_input: false\n  }}];\n}"
+      },
+      "id": "w2-deferred",
+      "name": "Code: /deferred Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        1960
+      ]
+    },
+    {
+      "parameters": {
         "jsCode": "// Unimplemented command handler\nconst action = $input.first().json.action || 'unknown';\nreturn [{\n  json: {\n    response_type: 'info',\n    message: `\\u2139\\uFE0F Command /${action} is not yet implemented. It will be available in a future update.`,\n    data: { action },\n    suggestions: ['Type /help for available commands', 'Try /today to view your quest board'],\n    awaiting_input: false,\n  }\n}];"
       },
       "id": "w2-unimplemented",
@@ -454,6 +482,13 @@
         [
           {
             "node": "Code: /stats Handler",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code: /deferred Handler",
             "type": "main",
             "index": 0
           }
