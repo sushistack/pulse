@@ -62,7 +62,7 @@ development_status:
   # Epic 3: Core Quest Interaction Commands
   epic-3: in-progress
   3-1-w2-command-router-and-response-formatter: done
-  3-2-complete-interactive-quest-completion: backlog
+  3-2-complete-interactive-quest-completion: done
   3-3-cancel-interactive-quest-cancellation: backlog
   3-4-defer-interactive-quest-deferral-with-warning: backlog
   3-5-add-manual-quest-addition: backlog
