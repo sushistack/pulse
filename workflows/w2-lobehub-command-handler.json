@@ -201,6 +201,21 @@
                 ]
               },
               "outputKey": "deferred"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json._route }}",
+                    "rightValue": "preview",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "outputKey": "preview"
             }
           ],
           "fallbackOutput": {
@@ -364,6 +379,19 @@
     },
     {
       "parameters": {
+        "jsCode": "// ===========================================\n// /preview — Next-Day Quest Dry-Run\n// ===========================================\n// Runs W1 Step 2 logic in DRY_RUN mode for tomorrow's date.\n// Shows which routines would generate quests, with warnings.\n\nconst config = {\n  base_url: $env.PULSE_PLANE_BASE_URL,\n  workspace_slug: $env.PULSE_PLANE_WORKSPACE_SLUG,\n  api_key: $env.PULSE_PLANE_API_KEY,\n  daily_quest_project_id: $env.PULSE_DAILY_QUEST_PROJECT_ID,\n  label_daily_routine: $env.PULSE_LABEL_DAILY_ROUTINE_ID,\n};\n\nconst basePath = `${config.base_url}/api/v1/workspaces/${config.workspace_slug}`;\nconst headers = { 'X-API-Key': config.api_key, 'Content-Type': 'application/json' };\nconst tz = $env.PULSE_USER_TIMEZONE || 'Asia/Seoul';\n\nconst sleep = (ms) => new Promise((r) => setTimeout(r, ms));\nconst MAX_RETRIES = 3;\nconst RETRY_MS = 5000;\nconst withRetry = async (fn, ctx) => {\n  for (let i = 1; i <= MAX_RETRIES; i++) {\n    try { return await fn(); } catch (e) {\n      console.log(`[RETRY] ${ctx} attempt ${i}/${MAX_RETRIES}: ${e.message}`);\n      if (i === MAX_RETRIES) {\n        const isTimeout = e.code === 'ETIMEDOUT' || e.code === 'ECONNABORTED' || e.message?.includes('timeout');\n        const errorCode = isTimeout ? 'PLANE_API_TIMEOUT' : 'PLANE_API_ERROR';\n        const err = new Error(`[${errorCode}] ${ctx}: ${e.message}`);\n        err.errorCode = errorCode;\n        throw err;\n      }\n      await sleep(RETRY_MS);\n    }\n  }\n};\n\nconst apiGet = async (path) => {\n  const res = await fetch(`${basePath}${path}`, { method: 'GET', headers });\n  if (!res.ok) throw new Error(`HTTP ${res.status}`);\n  return res.json();\n};\n\nconst decodeEntities = (s) => s.replace(/&quot;/g, '\"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, \"'\").replace(/&apos;/g, \"'\");\nconst extractMeta = (html) => {\n  if (!html) return null;\n  try {\n    let m = html.match(/<pre><code\\s+class=\"language-pulse-meta\">([\\s\\S]*?)<\\/code><\\/pre>/);\n    if (m) return JSON.parse(decodeEntities(m[1].trim()));\n    m = html.match(/<pre><code>([\\s\\S]*?)<\\/code><\\/pre>/);\n    if (m) { const c = decodeEntities(m[1].trim()); if (c.includes('\"schema_version\"')) return JSON.parse(c); }\n    m = html.match(/```pulse-meta\\s*\\n([\\s\\S]*?)\\n\\s*```/);\n    if (m) return JSON.parse(m[1].trim());\n  } catch (e) { return null; }\n  return null;\n};\n\nconst PRIORITY_EMOJI = { urgent: '\\uD83D\\uDD34', high: '\\uD83D\\uDFE0', medium: '\\uD83D\\uDFE1', low: '\\uD83D\\uDFE2' };\nconst validRoutineTypes = ['daily', 'weekly', 'custom'];\nconst validPriorities = ['urgent', 'high', 'medium', 'low'];\n\ntry {\n  // Calculate tomorrow's date and day-of-week\n  const tomorrow = new Date();\n  tomorrow.setDate(tomorrow.getDate() + 1);\n  const tomorrowStr = tomorrow.toLocaleDateString('en-CA', { timeZone: tz });\n  const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];\n  const tomorrowDay = dayNames[new Date(tomorrow.toLocaleString('en-US', { timeZone: tz })).getDay()];\n  const tomorrowDayFull = tomorrow.toLocaleDateString('en-US', { timeZone: tz, weekday: 'long' });\n\n  // Fetch all projects\n  const projectsRes = await withRetry(() => apiGet('/projects/'), 'List projects');\n  const projects = projectsRes.results || projectsRes || [];\n\n  const expectedQuests = [];\n  const warnings = [];\n\n  for (const project of projects) {\n    if (project.id === config.daily_quest_project_id) continue;\n\n    const issuesRes = await withRetry(\n      () => apiGet(`/projects/${project.id}/issues/?per_page=100&expand=labels,state`),\n      `Fetch issues for ${project.identifier || project.name}`\n    );\n    const issues = issuesRes.results || issuesRes || [];\n\n    for (const issue of issues) {\n      const labels = issue.label_detail || issue.labels || [];\n      const labelNames = labels.map((l) => (typeof l === 'string' ? l : l.name || ''));\n\n      const hasExactLabel = labelNames.includes('daily-routine');\n      const hasNearMatch = !hasExactLabel && labelNames.some((n) =>\n        n.toLowerCase().includes('daily') && n.toLowerCase().includes('routine')\n      );\n\n      if (hasNearMatch) {\n        const nearLabel = labelNames.find((n) => n.toLowerCase().includes('daily') && n.toLowerCase().includes('routine'));\n        warnings.push(`\\u26A0\\uFE0F [LABEL_MISMATCH] Issue '${issue.name}' has label '${nearLabel}' \\u2014 did you mean 'daily-routine'?`);\n      }\n\n      if (!hasExactLabel) continue;\n\n      // Parse pulse-meta\n      const meta = extractMeta(issue.description_html);\n      if (!meta) {\n        warnings.push(`\\u26A0\\uFE0F [INVALID_ROUTINE_META] Routine '${issue.name}' \\u2014 no pulse-meta block`);\n        continue;\n      }\n\n      // Validate\n      const metaErrors = [];\n      if (meta.schema_version !== 1) metaErrors.push('invalid schema_version');\n      if (!meta.routine_days || !Array.isArray(meta.routine_days) || meta.routine_days.length === 0) metaErrors.push('missing/invalid routine_days');\n      if (!meta.routine_time) metaErrors.push('missing routine_time');\n      if (meta.routine_type && !validRoutineTypes.includes(meta.routine_type)) metaErrors.push(`invalid routine_type: ${meta.routine_type}`);\n      if (meta.routine_priority && !validPriorities.includes(meta.routine_priority)) metaErrors.push(`invalid routine_priority: ${meta.routine_priority}`);\n      if (metaErrors.length > 0) {\n        warnings.push(`\\u26A0\\uFE0F [INVALID_ROUTINE_META] Routine '${issue.name}' \\u2014 ${metaErrors.join(', ')}`);\n        continue;\n      }\n\n      // Check schedule for tomorrow\n      if (!meta.routine_days.includes(tomorrowDay)) continue;\n      if (meta.routine_active_from && meta.routine_active_from > tomorrowStr) continue;\n      if (meta.routine_active_until && meta.routine_active_until < tomorrowStr) continue;\n\n      const pEmoji = PRIORITY_EMOJI[meta.routine_priority] || '\\uD83D\\uDFE1';\n      expectedQuests.push({\n        name: issue.name,\n        project: project.name,\n        time: meta.routine_time,\n        duration_min: meta.routine_duration_min,\n        priority: meta.routine_priority || 'medium',\n        priority_emoji: pEmoji,\n      });\n    }\n  }\n\n  // Sort by time\n  expectedQuests.sort((a, b) => (a.time || '').localeCompare(b.time || ''));\n\n  const formatDuration = (min) => {\n    if (!min) return '';\n    if (min >= 60) { const h = Math.floor(min / 60); const m = min % 60; return m > 0 ? `${h}h${m}min` : `${h}h`; }\n    return `${min}min`;\n  };\n\n  let message = `\\uD83D\\uDCCB ${tomorrowStr} (${tomorrowDayFull}) Preview \\u2014 Expected Quests\\n\\n`;\n\n  if (expectedQuests.length === 0) {\n    message += '_No routines scheduled for tomorrow._\\n';\n  } else {\n    for (const q of expectedQuests) {\n      const dur = q.duration_min ? ` (${formatDuration(q.duration_min)})` : '';\n      message += `  ${q.priority_emoji} ${q.name} \\u2014 ${q.time}${dur} [${q.project}]\\n`;\n    }\n    message += `\\n_Total: ${expectedQuests.length} quest(s) expected_\\n`;\n  }\n\n  if (warnings.length > 0) {\n    message += '\\n**Warnings**\\n';\n    for (const w of warnings) {\n      message += `${w}\\n`;\n    }\n  }\n\n  return [{ json: {\n    response_type: 'info',\n    message,\n    data: { date: tomorrowStr, day: tomorrowDayFull, quests: expectedQuests, warnings },\n    suggestions: [],\n    awaiting_input: false\n  }}];\n} catch (e) {\n  const code = e.errorCode || 'PLANE_API_ERROR';\n  const recovery = code === 'PLANE_API_TIMEOUT'\n    ? 'Please check Plane.so service status and try again later.'\n    : 'Please check Plane.so API configuration.';\n  return [{ json: {\n    response_type: 'error',\n    message: `\\u274C [W2-PREVIEW] [${code}] ${e.message}. ${recovery}`,\n    data: { error_code: code },\n    suggestions: ['Check n8n execution logs'],\n    awaiting_input: false\n  }}];\n}"
+      },
+      "id": "w2-preview",
+      "name": "Code: /preview Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        2120
+      ]
+    },
+    {
+      "parameters": {
         "jsCode": "// Unimplemented command handler\nconst action = $input.first().json.action || 'unknown';\nreturn [{\n  json: {\n    response_type: 'info',\n    message: `\\u2139\\uFE0F Command /${action} is not yet implemented. It will be available in a future update.`,\n    data: { action },\n    suggestions: ['Type /help for available commands', 'Try /today to view your quest board'],\n    awaiting_input: false,\n  }\n}];"
       },
       "id": "w2-unimplemented",
@@ -489,6 +517,13 @@
         [
           {
             "node": "Code: /deferred Handler",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code: /preview Handler",
             "type": "main",
             "index": 0
           }
