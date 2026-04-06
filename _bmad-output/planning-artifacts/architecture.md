@@ -129,10 +129,12 @@ pulse/
 │   ├── w2-lobehub-command-handler.json
 │   ├── w3-daily-summary-reporter.json
 │   └── w4-deferred-cleanup.json
-├── src/                    # Custom code for n8n Code nodes (flat start, subfolder when needed)
+├── src/                    # Reference implementations for n8n Code nodes (canonical logic)
 │   ├── pulse-meta.js       # pulse-meta JSON parsing & validation
 │   ├── plane-api.js        # Plane.so API helper utilities
-│   └── error-codes.js      # Error taxonomy constants
+│   ├── error-codes.js      # Error taxonomy constants
+│   ├── dry-run.js          # DRY_RUN mode support (P-4)
+│   └── response-formatter.js  # LobeHub response formatting (F-3, F-5)
 ├── prompts/                # DeepSeek prompt templates (separated from code — content, not logic)
 │   ├── w1-task-generation.md
 │   ├── w1-schedule-optimization.md
@@ -167,7 +169,9 @@ pulse/
 
 **n8n Code Sync Strategy:**
 
-Bidirectional sync script (`scripts/sync-code.sh`) to manage code between `src/` files and n8n workflow JSON Code nodes:
+n8n Code nodes cannot `require()` external files, so each handler inlines its own copy of shared logic (retry, meta extraction, formatting, etc.). The `src/` files serve as **canonical reference implementations** — they define the authoritative patterns that inline code must follow.
+
+**Current workflow:** Edit `src/` reference files first, then propagate changes to the n8n JSON Code nodes inline code. A `scripts/sync-code.sh` bidirectional sync script is planned for future automation:
 
 ```bash
 # Extract: n8n JSON → src/ (after editing in n8n UI)
@@ -177,7 +181,7 @@ scripts/sync-code.sh extract
 scripts/sync-code.sh inject
 ```
 
-This allows development in either n8n Editor UI or IDE, with explicit sync before commits. Decision to implement this script deferred until Code node count is confirmed during implementation (expected 20-30 nodes across W1-W4 + commands).
+Decision to implement this script is deferred until Code node count stabilizes (expected 20-30 nodes across W1-W4 + commands).
 
 **Intentionally Excluded:**
 
@@ -565,9 +569,8 @@ pulse/
 ├── src/                                   # Custom code for n8n Code nodes
 │   ├── pulse-meta.js                      # pulse-meta JSON parsing & validation (F-4 patterns)
 │   ├── plane-api.js                       # Plane.so API helper (P-2 standards)
-│   ├── quest-builder.js                   # Quest issue creation payload builder
 │   ├── error-codes.js                     # Error taxonomy constants (flat strings)
-│   ├── schedule.js                        # Timezone & scheduling calculations
+│   ├── dry-run.js                         # DRY_RUN mode support (P-4 pattern)
 │   └── response-formatter.js              # LobeHub response formatting (F-3, F-5 patterns)
 │
 ├── prompts/                               # DeepSeek prompt templates (F-2 structure)
@@ -651,7 +654,7 @@ pulse/
 
 | FR Category | Primary Files | Secondary Files |
 |---|---|---|
-| Quest Generation (FR1-10) | `workflows/w1-*.json` | `src/pulse-meta.js`, `src/quest-builder.js`, `prompts/w1-*.md` |
+| Quest Generation (FR1-10) | `workflows/w1-*.json` | `src/pulse-meta.js`, `prompts/w1-*.md` |
 | Routine Management (FR11-16) | `workflows/w2-*.json` | `src/pulse-meta.js`, `schemas/pulse-meta.schema.json` |
 | Daily Quest Interaction (FR17-24) | `workflows/w2-*.json` | `src/response-formatter.js`, `src/plane-api.js` |
 | Reporting & Analytics (FR25-31) | `workflows/w2-*.json`, `workflows/w3-*.json` | `prompts/w3-*.md`, `src/response-formatter.js` |
@@ -669,8 +672,7 @@ pulse/
 | pulse-meta validation | `src/pulse-meta.js` + `schemas/` | Used by W1 (scan), W2 (`/preview`, `/edit`), LobeHub (routine creation) |
 | Plane.so API access | `src/plane-api.js` | Standardized helper for all Plane.so operations |
 | Response formatting | `src/response-formatter.js` | All W2 command responses, W3 report |
-| Timezone handling | `src/schedule.js` | W1 scheduling, all date comparisons |
-| DRY_RUN mode | All workflows | Checked at every Plane.so write and LobeHub push |
+| DRY_RUN mode | `src/dry-run.js` | All workflows, P-4 pattern — checked at every Plane.so write and LobeHub push |
 
 ### Data Flow
 
