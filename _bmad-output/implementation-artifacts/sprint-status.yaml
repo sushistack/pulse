@@ -70,7 +70,7 @@ development_status:
   epic-3-retrospective: optional
 
   # Epic 4: Reporting, Analytics & Query Commands
-  epic-4: in-progress
+  epic-4: done
   4-1-brief-and-brief-all-milestone-briefing: done
   4-2-stats-n-day-statistics: done
   4-3-deferred-view-deferred-quests: done
