@@ -79,6 +79,12 @@
     "source_issue_id": {
       "type": "string",
       "description": "Plane.so issue ID of the routine definition"
+    },
+    "defer_count": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 0,
+      "description": "Number of times this quest has been deferred. Dynamically added by W1 Step 2 on quest creation, incremented by /defer handler."
     }
   },
   "additionalProperties": false

@@ -10,5 +10,6 @@
   "routine_active_until": null,
   "routine_cooldown_days": 0,
   "source_project_id": "project_abc123",
-  "source_issue_id": "issue_xyz789"
+  "source_issue_id": "issue_xyz789",
+  "defer_count": 0
 }

@@ -459,6 +459,7 @@ Rules:
 - `success: false` requires `error` field with error code + message
 - `metadata` enables downstream nodes to assess partial failure
 - Timestamps: ISO 8601 format, timezone from `USER_TIMEZONE` environment variable (no hardcoded offset)
+- **Exception — W2 command handlers:** W2 handler nodes output `{ response_type, message, data, suggestions, awaiting_input }` instead of the P-1 wrapper. This is an intentional design decision: W2 responses are terminal (returned directly to LobeHub via webhook `responseMode: lastNode`), not consumed by downstream Code nodes. The P-1 wrapper is required for inter-node data flow within multi-step workflows (W1, W3, W4).
 
 **P-2: Plane.so API Call Standards**
 
