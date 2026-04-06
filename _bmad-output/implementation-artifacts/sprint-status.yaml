@@ -94,9 +94,9 @@ development_status:
   epic-6-retrospective: optional
 
   # Epic 7: Advanced Quest Management & Maintenance
-  epic-7: in-progress
+  epic-7: done
   7-1-restore-restore-deferred-quests: done
   7-2-edit-edit-quest-time-and-priority: done
   7-3-regen-regenerate-todays-quests: done
-  7-4-w4-weekly-deferred-cleanup: backlog
+  7-4-w4-weekly-deferred-cleanup: done
   epic-7-retrospective: optional

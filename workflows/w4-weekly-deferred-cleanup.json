@@ -1,0 +1,72 @@
+{
+  "name": "w4-weekly-deferred-cleanup",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 0 * * 0"
+            }
+          ]
+        }
+      },
+      "id": "w4-cron",
+      "name": "Cron: Sunday 00:00 KST",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ===========================================\n// W4 — Weekly Deferred Cleanup\n// ===========================================\n// Triggers Sunday 00:00 KST.\n// Queries deferred quests with defer_count >= 7.\n// Non-mandatory: auto-cancel.\n// Mandatory: keep deferred with warning comment.\n// If DeepSeek available, consult for cancel/keep decisions.\n// Generates weekly deferred report and sends to LobeHub.\n// References W5 as Error Workflow. Non-critical failure.\n\nconst config = {\n  base_url: $env.PULSE_PLANE_BASE_URL,\n  workspace_slug: $env.PULSE_PLANE_WORKSPACE_SLUG,\n  api_key: $env.PULSE_PLANE_API_KEY,\n  daily_quest_project_id: $env.PULSE_DAILY_QUEST_PROJECT_ID,\n  state_deferred: $env.PULSE_STATE_DEFERRED_ID,\n  state_canceled: $env.PULSE_STATE_CANCELED_ID,\n  deepseek_api_key: $env.PULSE_DEEPSEEK_API_KEY || '',\n  deepseek_base_url: $env.PULSE_DEEPSEEK_BASE_URL || 'https://api.deepseek.com/v1',\n  lobehub_webhook_url: $env.PULSE_LOBEHUB_WEBHOOK_URL || '',\n};\n\nconst basePath = `${config.base_url}/api/v1/workspaces/${config.workspace_slug}`;\nconst headers = { 'X-API-Key': config.api_key, 'Content-Type': 'application/json' };\nconst tz = $env.PULSE_USER_TIMEZONE || 'Asia/Seoul';\nconst DRY_RUN = ($env.PULSE_DRY_RUN || 'false').toLowerCase() === 'true' || ($env.PULSE_DRY_RUN || 'false') === '1';\n\nconst sleep = (ms) => new Promise((r) => setTimeout(r, ms));\nconst MAX_RETRIES = 3;\nconst RETRY_MS = 5000;\nconst withRetry = async (fn, ctx) => {\n  for (let i = 1; i <= MAX_RETRIES; i++) {\n    try { return await fn(); } catch (e) {\n      console.log(`[RETRY] ${ctx} attempt ${i}/${MAX_RETRIES}: ${e.message}`);\n      if (i === MAX_RETRIES) {\n        const isTimeout = e.code === 'ETIMEDOUT' || e.code === 'ECONNABORTED' || e.message?.includes('timeout');\n        const errorCode = isTimeout ? 'PLANE_API_TIMEOUT' : 'PLANE_API_ERROR';\n        const err = new Error(`[${errorCode}] ${ctx}: ${e.message}`);\n        err.errorCode = errorCode;\n        throw err;\n      }\n      await sleep(RETRY_MS);\n    }\n  }\n};\n\nconst apiGet = async (path) => {\n  const res = await fetch(`${basePath}${path}`, { method: 'GET', headers });\n  if (!res.ok) throw new Error(`HTTP ${res.status}`);\n  return res.json();\n};\n\nconst apiPatch = async (path, body) => {\n  const res = await fetch(`${basePath}${path}`, { method: 'PATCH', headers, body: JSON.stringify(body) });\n  if (!res.ok) throw new Error(`HTTP ${res.status}`);\n  return res.json();\n};\n\nconst apiPost = async (path, body) => {\n  const res = await fetch(`${basePath}${path}`, { method: 'POST', headers, body: JSON.stringify(body) });\n  if (!res.ok) throw new Error(`HTTP ${res.status}`);\n  return res.json();\n};\n\nconst decodeEntities = (s) => s.replace(/&quot;/g, '\"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, \"'\").replace(/&apos;/g, \"'\");\nconst extractMeta = (html) => {\n  if (!html) return null;\n  try {\n    let m = html.match(/<pre><code\\s+class=\"language-pulse-meta\">([\\s\\S]*?)<\\/code><\\/pre>/);\n    if (m) return JSON.parse(decodeEntities(m[1].trim()));\n    m = html.match(/<pre><code>([\\s\\S]*?)<\\/code><\\/pre>/);\n    if (m) { const c = decodeEntities(m[1].trim()); if (c.includes('\"schema_version\"')) return JSON.parse(c); }\n    m = html.match(/```pulse-meta\\s*\\n([\\s\\S]*?)\\n\\s*```/);\n    if (m) return JSON.parse(m[1].trim());\n  } catch (e) { return null; }\n  return null;\n};\n\ntry {\n  const projId = config.daily_quest_project_id;\n  const nowStr = new Date().toLocaleTimeString('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit' });\n  const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: tz });\n\n  // Fetch all deferred quests\n  const result = await withRetry(\n    () => apiGet(`/projects/${projId}/issues/?per_page=100&expand=labels,state&state=${config.state_deferred}`),\n    'Fetch deferred quests'\n  );\n  const allDeferred = result.results || result || [];\n\n  // Filter for defer_count >= 7\n  const chronic = allDeferred.filter(q => {\n    const meta = extractMeta(q.description_html);\n    return meta && (meta.defer_count || 0) >= 7;\n  });\n\n  if (chronic.length === 0) {\n    console.log('[W4] No chronically deferred quests found (defer_count >= 7). Nothing to clean up.');\n    // Still send a report\n    const reportMessage = `\\uD83D\\uDDD1\\uFE0F **Weekly Deferred Cleanup Report** (${todayStr})\\n\\nNo quests with 7+ deferrals found. All clear!\\n\\n_Total deferred quests remaining: ${allDeferred.length}_`;\n\n    if (config.lobehub_webhook_url && !DRY_RUN) {\n      try {\n        await fetch(config.lobehub_webhook_url, {\n          method: 'POST',\n          headers: { 'Content-Type': 'application/json' },\n          body: JSON.stringify({ message: reportMessage })\n        });\n      } catch (e) {\n        console.log(`[W4] LobeHub notify failed (non-critical): ${e.message}`);\n      }\n    }\n\n    return [{ json: { status: 'ok', chronic_count: 0, canceled: 0, kept: 0, total_deferred: allDeferred.length } }];\n  }\n\n  // Try DeepSeek for intelligent decisions\n  let aiDecisions = null;\n  if (config.deepseek_api_key) {\n    try {\n      const questSummary = chronic.map(q => {\n        const meta = extractMeta(q.description_html);\n        return {\n          issue_id: q.id,\n          name: q.name,\n          defer_count: meta?.defer_count || 0,\n          routine_mandatory: meta?.routine_mandatory || false,\n          routine_priority: meta?.routine_priority || 'medium',\n        };\n      });\n\n      const systemPrompt = '# W4: AI Deferred Quest Cleanup Decision\\n\\n## Role\\n\\nYou are a task hygiene assistant that evaluates chronically deferred quests and recommends whether each should be automatically canceled or kept.\\n\\n## Task\\n\\nGiven a list of deferred quests with `defer_count >= 7`, evaluate each quest and decide:\\n1. **Cancel**: The quest has been deferred so many times it is unlikely to be completed. Remove it to reduce clutter.\\n2. **Keep**: The quest is mandatory or has strategic importance and should remain deferred despite chronic deferral.\\n\\n## Decision Criteria\\n\\n- **Mandatory flag**: If `routine_mandatory` is `true`, strongly prefer keeping the quest. Only recommend canceling mandatory quests in exceptional circumstances.\\n- **Defer count**: Higher defer counts suggest lower relevance. Quests deferred 10+ times with no mandatory flag are strong cancel candidates.\\n- **Priority**: Higher priority quests (urgent, high) deserve more consideration before canceling.\\n- **Quest name/context**: Use the quest name to infer importance. Vague or low-value names lean toward cancel.\\n\\n## Constraints\\n\\n- Each decision must include: `issue_id`, `name`, `action` (\"cancel\" or \"keep\"), and `rationale` (1-2 sentences).\\n- Be conservative with mandatory quests — default to \"keep\" unless there is a compelling reason to cancel.\\n- All output must be in English.\\n\\n## Output Format\\n\\nYou MUST respond with valid JSON in the following format:\\n\\n```json\\n{\\n  \"decisions\": [\\n    {\\n      \"issue_id\": \"uuid\",\\n      \"name\": \"Quest name\",\\n      \"action\": \"cancel\",\\n      \"rationale\": \"Brief reason for the decision.\"\\n    }\\n  ]\\n}\\n```\\n';\n\n      const aiRes = await fetch(`${config.deepseek_base_url}/chat/completions`, {\n        method: 'POST',\n        headers: {\n          'Authorization': `Bearer ${config.deepseek_api_key}`,\n          'Content-Type': 'application/json'\n        },\n        body: JSON.stringify({\n          model: 'deepseek-chat',\n          messages: [\n            { role: 'system', content: systemPrompt },\n            { role: 'user', content: JSON.stringify({ quests: questSummary }) }\n          ],\n          response_format: { type: 'json_object' },\n          temperature: 0.3,\n          max_tokens: 2000\n        })\n      });\n\n      if (aiRes.ok) {\n        const aiData = await aiRes.json();\n        const content = aiData.choices?.[0]?.message?.content;\n        if (content) {\n          aiDecisions = JSON.parse(content);\n          console.log(`[W4] DeepSeek provided ${aiDecisions.decisions?.length || 0} cleanup decisions.`);\n        }\n      }\n    } catch (e) {\n      console.log(`[W4] DeepSeek consultation failed (non-critical): ${e.message}. Falling back to rule-based logic.`);\n    }\n  }\n\n  // Process each chronic quest\n  const canceledQuests = [];\n  const keptQuests = [];\n\n  for (const quest of chronic) {\n    const meta = extractMeta(quest.description_html);\n    const deferCount = meta?.defer_count || 0;\n    const isMandatory = meta?.routine_mandatory || false;\n\n    // Determine action: AI decision or rule-based fallback\n    let action = 'cancel'; // default for non-mandatory\n    if (isMandatory) action = 'keep'; // default for mandatory\n\n    if (aiDecisions?.decisions) {\n      const aiDecision = aiDecisions.decisions.find(d => d.issue_id === quest.id);\n      if (aiDecision) {\n        action = aiDecision.action === 'keep' ? 'keep' : 'cancel';\n      }\n    }\n\n    if (action === 'cancel') {\n      if (DRY_RUN) {\n        console.log(`[DRY_RUN] Would cancel chronic deferred quest: ${quest.name} (defer_count: ${deferCount})`);\n      } else {\n        await withRetry(\n          () => apiPatch(`/projects/${projId}/issues/${quest.id}/`, { state: config.state_canceled }),\n          `Cancel chronic quest ${quest.id}`\n        );\n        await withRetry(\n          () => apiPost(`/projects/${projId}/issues/${quest.id}/comments/`, {\n            comment_html: `<p>\\uD83D\\uDDD1\\uFE0F [${nowStr}] Auto-canceled: deferred ${deferCount}+ times</p>`\n          }),\n          `Comment on ${quest.id}`\n        );\n      }\n      canceledQuests.push({ name: quest.name, defer_count: deferCount });\n    } else {\n      // Keep but add warning comment\n      if (!DRY_RUN) {\n        await withRetry(\n          () => apiPost(`/projects/${projId}/issues/${quest.id}/comments/`, {\n            comment_html: `<p>\\u26A0\\uFE0F [${nowStr}] Chronic deferral (count: ${deferCount}) \\u2014 mandatory routine, kept deferred</p>`\n          }),\n          `Comment on ${quest.id}`\n        );\n      }\n      keptQuests.push({ name: quest.name, defer_count: deferCount });\n    }\n  }\n\n  // Generate weekly deferred report\n  const dryTag = DRY_RUN ? ' [DRY_RUN]' : '';\n  let report = `\\uD83D\\uDDD1\\uFE0F **Weekly Deferred Cleanup Report**${dryTag} (${todayStr})\\n\\n`;\n\n  if (canceledQuests.length > 0) {\n    report += `**\\uD83D\\uDEAB Canceled** (${canceledQuests.length}):\\n`;\n    for (const q of canceledQuests) {\n      report += `  \\u2022 ${q.name} (deferred x${q.defer_count})\\n`;\n    }\n    report += '\\n';\n  }\n\n  if (keptQuests.length > 0) {\n    report += `**\\u26A0\\uFE0F Kept (mandatory)** (${keptQuests.length}):\\n`;\n    for (const q of keptQuests) {\n      report += `  \\u2022 ${q.name} (deferred x${q.defer_count})\\n`;\n    }\n    report += '\\n';\n  }\n\n  const remainingDeferred = allDeferred.length - canceledQuests.length;\n  report += `_Total deferred remaining: ${remainingDeferred}_`;\n\n  // Send report to LobeHub\n  if (config.lobehub_webhook_url && !DRY_RUN) {\n    try {\n      await fetch(config.lobehub_webhook_url, {\n        method: 'POST',\n        headers: { 'Content-Type': 'application/json' },\n        body: JSON.stringify({ message: report })\n      });\n      console.log('[W4] Weekly report sent to LobeHub.');\n    } catch (e) {\n      console.log(`[W4] LobeHub notify failed (non-critical): ${e.message}`);\n    }\n  } else if (DRY_RUN) {\n    console.log(`[DRY_RUN] Would send weekly report to LobeHub:\\n${report}`);\n  }\n\n  return [{ json: {\n    status: 'ok',\n    chronic_count: chronic.length,\n    canceled: canceledQuests.length,\n    kept: keptQuests.length,\n    total_deferred: remainingDeferred,\n    report,\n    dry_run: DRY_RUN\n  }}];\n} catch (e) {\n  const code = e.errorCode || 'SYSTEM_ERROR';\n  console.log(`[W4] ERROR: [${code}] ${e.message}`);\n  return [{ json: {\n    status: 'error',\n    error_code: code,\n    message: e.message\n  }}];\n}"
+      },
+      "id": "w4-cleanup",
+      "name": "Code: Weekly Deferred Cleanup",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## W4 — Weekly Deferred Cleanup\n\n**Trigger:** Sunday 00:00 KST (cron)\n**Purpose:** Auto-cancel quests deferred 7+ times\n**Non-critical:** Failure does not affect daily operations\n\n### Logic:\n1. Fetch all deferred quests\n2. Filter for defer_count >= 7\n3. If DeepSeek available, consult for decisions\n4. Non-mandatory → cancel, Mandatory → keep with warning\n5. Send weekly report to LobeHub\n\n### DRY_RUN:\n- Cancellations blocked and logged\n- Report generation still runs"
+      },
+      "id": "w4-sticky",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        200,
+        480
+      ]
+    }
+  ],
+  "connections": {
+    "Cron: Sunday 00:00 KST": {
+      "main": [
+        [
+          {
+            "node": "Code: Weekly Deferred Cleanup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "w5-error-handler"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "pinData": {}
+}
