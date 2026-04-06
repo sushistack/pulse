@@ -156,6 +156,21 @@
                 ]
               },
               "outputKey": "add"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json._route }}",
+                    "rightValue": "brief",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "outputKey": "brief"
             }
           ],
           "fallbackOutput": {
@@ -280,6 +295,19 @@
     },
     {
       "parameters": {
+        "jsCode": "// ===========================================\n// /brief — Milestone Briefing\n// ===========================================\n// /brief: Top 5 milestones sorted by D-Day (closest deadline first)\n// /brief all: All milestones grouped by project\n\nconst config = {\n  base_url: $env.PULSE_PLANE_BASE_URL,\n  workspace_slug: $env.PULSE_PLANE_WORKSPACE_SLUG,\n  api_key: $env.PULSE_PLANE_API_KEY,\n};\n\nconst basePath = `${config.base_url}/api/v1/workspaces/${config.workspace_slug}`;\nconst headers = { 'X-API-Key': config.api_key, 'Content-Type': 'application/json' };\nconst tz = $env.PULSE_USER_TIMEZONE || 'Asia/Seoul';\n\nconst sleep = (ms) => new Promise((r) => setTimeout(r, ms));\nconst MAX_RETRIES = 3;\nconst RETRY_MS = 5000;\nconst withRetry = async (fn, ctx) => {\n  for (let i = 1; i <= MAX_RETRIES; i++) {\n    try { return await fn(); } catch (e) {\n      console.log(`[RETRY] ${ctx} attempt ${i}/${MAX_RETRIES}: ${e.message}`);\n      if (i === MAX_RETRIES) {\n        const isTimeout = e.code === 'ETIMEDOUT' || e.code === 'ECONNABORTED' || e.message?.includes('timeout');\n        const errorCode = isTimeout ? 'PLANE_API_TIMEOUT' : 'PLANE_API_ERROR';\n        const err = new Error(`[${errorCode}] ${ctx}: ${e.message}`);\n        err.errorCode = errorCode;\n        throw err;\n      }\n      await sleep(RETRY_MS);\n    }\n  }\n};\n\nconst apiGet = async (path) => {\n  const res = await fetch(`${basePath}${path}`, { method: 'GET', headers });\n  if (!res.ok) throw new Error(`HTTP ${res.status}`);\n  return res.json();\n};\n\nconst target = $input.first().json.target;\nconst showAll = target === 'all';\n\ntry {\n  const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: tz });\n\n  // Fetch all projects\n  const projectsRes = await withRetry(() => apiGet('/projects/'), 'List projects');\n  const projects = projectsRes.results || projectsRes || [];\n\n  const allMilestones = [];\n\n  for (const project of projects) {\n    // Fetch modules (milestones) for each project\n    const modulesRes = await withRetry(\n      () => apiGet(`/projects/${project.id}/modules/?per_page=100`),\n      `List modules for ${project.name}`\n    );\n    const modules = modulesRes.results || modulesRes || [];\n\n    for (const mod of modules) {\n      if (!mod.target_date) continue;\n\n      // Calculate D-Day\n      const targetMs = new Date(mod.target_date + 'T00:00:00').getTime();\n      const todayMs = new Date(todayStr + 'T00:00:00').getTime();\n      const dDays = Math.ceil((targetMs - todayMs) / (24 * 60 * 60 * 1000));\n\n      // Fetch module issues for progress calculation\n      let progress = 0;\n      try {\n        const issuesRes = await withRetry(\n          () => apiGet(`/projects/${project.id}/modules/${mod.id}/module-issues/?per_page=100&expand=state`),\n          `Module issues for ${mod.name}`\n        );\n        const issues = issuesRes.results || issuesRes || [];\n        const total = issues.length;\n        if (total > 0) {\n          const completed = issues.filter(i => {\n            const issue = i.issue_detail || i;\n            const stateName = issue.state_detail?.name || issue.state_name || '';\n            return stateName === 'Done' || stateName === 'Canceled';\n          }).length;\n          progress = Math.round((completed / total) * 100);\n        }\n      } catch (e) {\n        console.log(`[WARN] Could not fetch issues for module ${mod.name}: ${e.message}`);\n      }\n\n      allMilestones.push({\n        project_name: project.name,\n        milestone_name: mod.name,\n        progress,\n        d_days: dDays,\n        target_date: mod.target_date,\n        status: mod.status || 'unknown',\n      });\n    }\n  }\n\n  // Sort by D-Day (closest first)\n  allMilestones.sort((a, b) => a.d_days - b.d_days);\n\n  if (allMilestones.length === 0) {\n    return [{ json: {\n      response_type: 'info',\n      message: '\\u2139\\uFE0F No milestones with due dates found across your projects.',\n      data: null,\n      suggestions: ['Create milestones (modules) in Plane.so with target dates'],\n      awaiting_input: false\n    }}];\n  }\n\n  let message = '';\n\n  if (showAll) {\n    // Group by project\n    const grouped = {};\n    for (const m of allMilestones) {\n      if (!grouped[m.project_name]) grouped[m.project_name] = [];\n      grouped[m.project_name].push(m);\n    }\n\n    message = '\\uD83C\\uDFAF **All Milestones**\\n';\n    for (const [projName, milestones] of Object.entries(grouped)) {\n      message += `\\n**${projName}**\\n`;\n      for (const m of milestones) {\n        const dLabel = m.d_days >= 0 ? `D-${m.d_days}` : `D+${Math.abs(m.d_days)} (overdue)`;\n        message += `  \\uD83C\\uDFAF ${m.milestone_name}: ${m.progress}% (${dLabel})\\n`;\n      }\n    }\n  } else {\n    // Top 5\n    const top5 = allMilestones.slice(0, 5);\n    message = '\\uD83C\\uDFAF **Top 5 Milestones**\\n\\n';\n    for (const m of top5) {\n      const dLabel = m.d_days >= 0 ? `D-${m.d_days}` : `D+${Math.abs(m.d_days)} (overdue)`;\n      message += `\\uD83C\\uDFAF ${m.project_name} \\u2014 ${m.milestone_name}: ${m.progress}% (${dLabel})\\n`;\n    }\n  }\n\n  return [{ json: {\n    response_type: 'info',\n    message,\n    data: { milestones: showAll ? allMilestones : allMilestones.slice(0, 5), total: allMilestones.length },\n    suggestions: showAll ? [] : ['Use /brief all to see all milestones'],\n    awaiting_input: false\n  }}];\n} catch (e) {\n  const code = e.errorCode || 'PLANE_API_ERROR';\n  const recovery = code === 'PLANE_API_TIMEOUT'\n    ? 'Please check Plane.so service status and try again later.'\n    : 'Please check Plane.so API configuration.';\n  return [{ json: {\n    response_type: 'error',\n    message: `\\u274C [W2-BRIEF] [${code}] ${e.message}. ${recovery}`,\n    data: { error_code: code },\n    suggestions: ['Check n8n execution logs'],\n    awaiting_input: false\n  }}];\n}"
+      },
+      "id": "w2-brief",
+      "name": "Code: /brief Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        1640
+      ]
+    },
+    {
+      "parameters": {
         "jsCode": "// Unimplemented command handler\nconst action = $input.first().json.action || 'unknown';\nreturn [{\n  json: {\n    response_type: 'info',\n    message: `\\u2139\\uFE0F Command /${action} is not yet implemented. It will be available in a future update.`,\n    data: { action },\n    suggestions: ['Type /help for available commands', 'Try /today to view your quest board'],\n    awaiting_input: false,\n  }\n}];"
       },
       "id": "w2-unimplemented",
@@ -288,7 +316,7 @@
       "typeVersion": 2,
       "position": [
         1000,
-        1480
+        2600
       ]
     },
     {
@@ -384,6 +412,13 @@
         [
           {
             "node": "Code: /add Handler",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code: /brief Handler",
             "type": "main",
             "index": 0
           }
