@@ -1,0 +1,154 @@
+{
+  "name": "w5-error-handler",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "w5-trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract error details from the Error Trigger node\nconst errorData = $input.first().json;\n\nconst workflowName = errorData.workflow?.name || 'unknown';\nconst executionId = errorData.execution?.id || 'unknown';\nconst errorMessage = errorData.execution?.error?.message || 'Unknown error';\nconst errorNode = errorData.execution?.lastNodeExecuted || 'unknown';\nconst timestamp = new Date().toISOString();\n\n// Map workflow names to error code prefixes\nconst workflowPrefix = {\n  'w1-daily-quest-generator': 'W1',\n  'w2-lobehub-command-handler': 'W2',\n  'w3-daily-summary-reporter': 'W3',\n  'w4-deferred-cleanup': 'W4',\n};\nconst prefix = workflowPrefix[workflowName] || 'SYS';\nconst errorCode = `${prefix}_FATAL_ERROR`;\n\n// Build notification message following F-3 pattern\nconst notification = `\\u274C [${errorCode}] Fatal error in ${workflowName} at node '${errorNode}': ${errorMessage}. Check n8n execution ${executionId} for details.`;\n\nreturn [{\n  json: {\n    success: false,\n    data: {\n      error_code: errorCode,\n      workflow_name: workflowName,\n      execution_id: executionId,\n      error_node: errorNode,\n      error_message: errorMessage,\n      notification,\n      timestamp\n    },\n    error: {\n      code: errorCode,\n      message: errorMessage\n    },\n    metadata: {\n      step: 'w5_error_handler',\n      timestamp,\n      items_processed: 1,\n      items_failed: 1\n    }\n  }\n}];"
+      },
+      "id": "w5-parse",
+      "name": "Code: Parse Error Details",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check DRY_RUN mode before sending LobeHub notification\nconst dryRun = ($env.PULSE_DRY_RUN || 'false').toLowerCase();\nconst isDryRun = dryRun === 'true' || dryRun === '1';\nconst data = $input.first().json.data;\n\nif (isDryRun) {\n  console.log(`[DRY_RUN] Would send error notification to LobeHub: ${data.notification}`);\n  return [{\n    json: {\n      dry_run: true,\n      message: `[DRY_RUN] Would send error notification: ${data.error_code}`,\n      notification: data.notification\n    }\n  }];\n}\n\n// Pass through for actual notification\nreturn [{\n  json: {\n    should_notify: true,\n    notification: data.notification,\n    error_code: data.error_code\n  }\n}];"
+      },
+      "id": "w5-dryrun-check",
+      "name": "Code: Check DRY_RUN Mode",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "should-notify",
+              "leftValue": "={{ $json.should_notify }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "w5-if-notify",
+      "name": "IF: Should Notify",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.PULSE_LOBEHUB_WEBHOOK_URL }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.PULSE_LOBEHUB_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"response_type\": \"error\",\n  \"message\": \"{{ $json.notification }}\",\n  \"data\": {\n    \"error_code\": \"{{ $json.error_code }}\"\n  },\n  \"suggestions\": [\"Check n8n execution logs\", \"Verify environment configuration\"],\n  \"awaiting_input\": false\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "w5-notify",
+      "name": "Error: Notify LobeHub",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 240],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// DRY_RUN blocked notification - just log\nconst data = $input.first().json;\nconsole.log(data.message);\nreturn [$input.first()];"
+      },
+      "id": "w5-dryrun-log",
+      "name": "Code: Log DRY_RUN Skip",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 400]
+    },
+    {
+      "parameters": {
+        "content": "## W5 - Error Handler\n\n**Purpose:** Centralized fatal error routing for W1-W4 workflows.\n\n**Trigger:** Error Workflow — automatically invoked when any workflow referencing W5 encounters an unhandled fatal error.\n\n**Actions:**\n1. Parse error details (workflow name, node, message, execution ID)\n2. Format notification using F-3 pattern: `\\u274C [{CODE}] {message}. {recovery}`\n3. Send formatted error notification to LobeHub (blocked in DRY_RUN mode)\n\n**DRY_RUN Behavior:**\n- Notification is logged but NOT sent to LobeHub\n- Error parsing and formatting still execute normally",
+        "height": 340,
+        "width": 380
+      },
+      "id": "w5-sticky",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [200, 500]
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          { "node": "Code: Parse Error Details", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Code: Parse Error Details": {
+      "main": [
+        [
+          { "node": "Code: Check DRY_RUN Mode", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Code: Check DRY_RUN Mode": {
+      "main": [
+        [
+          { "node": "IF: Should Notify", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "IF: Should Notify": {
+      "main": [
+        [
+          { "node": "Error: Notify LobeHub", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Code: Log DRY_RUN Skip", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "pinData": {}
+}
