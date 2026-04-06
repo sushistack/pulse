@@ -171,6 +171,21 @@
                 ]
               },
               "outputKey": "brief"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json._route }}",
+                    "rightValue": "stats",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "outputKey": "stats"
             }
           ],
           "fallbackOutput": {
@@ -308,6 +323,19 @@
     },
     {
       "parameters": {
+        "jsCode": "// ===========================================\n// /stats — N-Day Statistics\n// ===========================================\n// Shows quest completion statistics for past N days.\n// Default N=7 if not specified.\n\nconst config = {\n  base_url: $env.PULSE_PLANE_BASE_URL,\n  workspace_slug: $env.PULSE_PLANE_WORKSPACE_SLUG,\n  api_key: $env.PULSE_PLANE_API_KEY,\n  daily_quest_project_id: $env.PULSE_DAILY_QUEST_PROJECT_ID,\n};\n\nconst basePath = `${config.base_url}/api/v1/workspaces/${config.workspace_slug}`;\nconst headers = { 'X-API-Key': config.api_key, 'Content-Type': 'application/json' };\nconst tz = $env.PULSE_USER_TIMEZONE || 'Asia/Seoul';\n\nconst sleep = (ms) => new Promise((r) => setTimeout(r, ms));\nconst MAX_RETRIES = 3;\nconst RETRY_MS = 5000;\nconst withRetry = async (fn, ctx) => {\n  for (let i = 1; i <= MAX_RETRIES; i++) {\n    try { return await fn(); } catch (e) {\n      console.log(`[RETRY] ${ctx} attempt ${i}/${MAX_RETRIES}: ${e.message}`);\n      if (i === MAX_RETRIES) {\n        const isTimeout = e.code === 'ETIMEDOUT' || e.code === 'ECONNABORTED' || e.message?.includes('timeout');\n        const errorCode = isTimeout ? 'PLANE_API_TIMEOUT' : 'PLANE_API_ERROR';\n        const err = new Error(`[${errorCode}] ${ctx}: ${e.message}`);\n        err.errorCode = errorCode;\n        throw err;\n      }\n      await sleep(RETRY_MS);\n    }\n  }\n};\n\nconst apiGet = async (path) => {\n  const res = await fetch(`${basePath}${path}`, { method: 'GET', headers });\n  if (!res.ok) throw new Error(`HTTP ${res.status}`);\n  return res.json();\n};\n\nconst params = $input.first().json.params || {};\n\ntry {\n  const days = parseInt(params.days) || 7;\n  if (days < 1 || days > 90) {\n    return [{ json: {\n      response_type: 'error',\n      message: '\\u274C [INVALID_INPUT] Days must be between 1 and 90. Please check input format and try again.',\n      data: { error_code: 'INVALID_INPUT' },\n      suggestions: ['Example: /stats 7, /stats 30'],\n      awaiting_input: false\n    }}];\n  }\n\n  const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: tz });\n  const projId = config.daily_quest_project_id;\n\n  // Calculate date range\n  const dates = [];\n  for (let i = days - 1; i >= 0; i--) {\n    const d = new Date();\n    d.setDate(d.getDate() - i);\n    dates.push(d.toLocaleDateString('en-CA', { timeZone: tz }));\n  }\n\n  // Fetch all issues in daily quest project\n  const allRes = await withRetry(\n    () => apiGet(`/projects/${projId}/issues/?per_page=100&expand=labels,state`),\n    'Fetch all quests'\n  );\n  const allIssues = allRes.results || allRes || [];\n\n  // Build daily breakdown\n  const dailyStats = {};\n  for (const date of dates) {\n    dailyStats[date] = { total: 0, completed: 0, deferred: 0, canceled: 0 };\n  }\n\n  for (const issue of allIssues) {\n    const td = issue.target_date;\n    if (!td || !dailyStats[td]) continue;\n    dailyStats[td].total++;\n    const state = issue.state_detail?.name || '';\n    if (state === 'Done') dailyStats[td].completed++;\n    else if (state === 'Deferred') dailyStats[td].deferred++;\n    else if (state === 'Canceled') dailyStats[td].canceled++;\n  }\n\n  // Calculate totals\n  let totalQuests = 0, totalCompleted = 0, totalDeferred = 0, totalCanceled = 0;\n  let bestDay = null, bestRate = -1, worstDay = null, worstRate = 101;\n\n  for (const date of dates) {\n    const s = dailyStats[date];\n    totalQuests += s.total;\n    totalCompleted += s.completed;\n    totalDeferred += s.deferred;\n    totalCanceled += s.canceled;\n\n    if (s.total > 0) {\n      const rate = Math.round((s.completed / s.total) * 100);\n      if (rate > bestRate) { bestRate = rate; bestDay = date; }\n      if (rate < worstRate) { worstRate = rate; worstDay = date; }\n    }\n  }\n\n  const completionRate = totalQuests > 0 ? Math.round((totalCompleted / totalQuests) * 100) : 0;\n  const deferralRate = totalQuests > 0 ? Math.round((totalDeferred / totalQuests) * 100) : 0;\n\n  // Format message\n  let message = `\\uD83D\\uDCCA **${days}-Day Statistics**\\n\\n`;\n  message += `**Summary**\\n`;\n  message += `  Total quests: ${totalQuests}\\n`;\n  message += `  Completed: ${totalCompleted} (${completionRate}%)\\n`;\n  message += `  Deferred: ${totalDeferred} (${deferralRate}%)\\n`;\n  message += `  Canceled: ${totalCanceled}\\n\\n`;\n\n  if (bestDay) {\n    const bDayName = new Date(bestDay + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' });\n    message += `  \\uD83C\\uDFC6 Best: ${bestDay} (${bDayName}) \\u2014 ${bestRate}%\\n`;\n  }\n  if (worstDay && worstDay !== bestDay) {\n    const wDayName = new Date(worstDay + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' });\n    message += `  \\uD83D\\uDCC9 Worst: ${worstDay} (${wDayName}) \\u2014 ${worstRate}%\\n`;\n  }\n\n  message += `\\n**Daily Breakdown**\\n`;\n  for (const date of dates) {\n    const s = dailyStats[date];\n    const dayName = new Date(date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' });\n    const rate = s.total > 0 ? Math.round((s.completed / s.total) * 100) : 0;\n    const bar = s.total > 0 ? ('\\u2588'.repeat(Math.round(rate / 10)) + '\\u2591'.repeat(10 - Math.round(rate / 10))) : '\\u2591'.repeat(10);\n    message += `  ${date} (${dayName}) ${bar} ${s.completed}/${s.total} (${rate}%)\\n`;\n  }\n\n  return [{ json: {\n    response_type: 'info',\n    message,\n    data: { days, total_quests: totalQuests, completed: totalCompleted, deferred: totalDeferred, canceled: totalCanceled, completion_rate: completionRate, daily: dailyStats },\n    suggestions: [],\n    awaiting_input: false\n  }}];\n} catch (e) {\n  const code = e.errorCode || 'PLANE_API_ERROR';\n  const recovery = code === 'PLANE_API_TIMEOUT'\n    ? 'Please check Plane.so service status and try again later.'\n    : 'Please check Plane.so API configuration.';\n  return [{ json: {\n    response_type: 'error',\n    message: `\\u274C [W2-STATS] [${code}] ${e.message}. ${recovery}`,\n    data: { error_code: code },\n    suggestions: ['Check n8n execution logs'],\n    awaiting_input: false\n  }}];\n}"
+      },
+      "id": "w2-stats",
+      "name": "Code: /stats Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        1800
+      ]
+    },
+    {
+      "parameters": {
         "jsCode": "// Unimplemented command handler\nconst action = $input.first().json.action || 'unknown';\nreturn [{\n  json: {\n    response_type: 'info',\n    message: `\\u2139\\uFE0F Command /${action} is not yet implemented. It will be available in a future update.`,\n    data: { action },\n    suggestions: ['Type /help for available commands', 'Try /today to view your quest board'],\n    awaiting_input: false,\n  }\n}];"
       },
       "id": "w2-unimplemented",
@@ -419,6 +447,13 @@
         [
           {
             "node": "Code: /brief Handler",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code: /stats Handler",
             "type": "main",
             "index": 0
           }
