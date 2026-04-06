@@ -66,7 +66,7 @@ development_status:
   3-3-cancel-interactive-quest-cancellation: done
   3-4-defer-interactive-quest-deferral-with-warning: done
   3-5-add-manual-quest-addition: done
-  3-6-help-command-reference: backlog
+  3-6-help-command-reference: done
   epic-3-retrospective: optional
 
   # Epic 4: Reporting, Analytics & Query Commands
