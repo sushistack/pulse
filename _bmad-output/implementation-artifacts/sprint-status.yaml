@@ -46,7 +46,7 @@ development_status:
   epic-1: in-progress
   1-1-repository-scaffolding-and-project-configuration: done
   1-2-plane-so-project-and-state-configuration: done
-  1-3-environment-validation-workflow-w0: backlog
+  1-3-environment-validation-workflow-w0: done
   1-4-error-handler-workflow-w5-and-dry-run-support: backlog
   epic-1-retrospective: optional
 

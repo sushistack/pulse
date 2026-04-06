@@ -1,0 +1,287 @@
+{
+  "name": "w0-environment-validator",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "w0-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate all required environment variables\nconst required = [\n  'PULSE_PLANE_API_KEY',\n  'PULSE_PLANE_BASE_URL',\n  'PULSE_PLANE_WORKSPACE_SLUG',\n  'PULSE_DAILY_QUEST_PROJECT_ID',\n  'PULSE_STATE_TODO_ID',\n  'PULSE_STATE_IN_PROGRESS_ID',\n  'PULSE_STATE_DEFERRED_ID',\n  'PULSE_STATE_DONE_ID',\n  'PULSE_STATE_CANCELED_ID',\n  'PULSE_LABEL_DAILY_ROUTINE_ID',\n  'PULSE_DEEPSEEK_API_KEY',\n  'PULSE_DEEPSEEK_BASE_URL',\n  'PULSE_N8N_WEBHOOK_SECRET',\n  'PULSE_USER_TIMEZONE'\n];\n\nconst optional = [\n  'PULSE_LOBEHUB_WEBHOOK_URL',\n  'PULSE_LOBEHUB_API_KEY',\n  'PULSE_DRY_RUN'\n];\n\nconst results = [];\nlet allPassed = true;\n\nfor (const varName of required) {\n  const value = $env[varName] || '';\n  const passed = value.length > 0;\n  if (!passed) allPassed = false;\n  results.push({\n    variable: varName,\n    status: passed ? 'pass' : 'fail',\n    required: true,\n    message: passed ? 'Set' : 'Missing or empty'\n  });\n}\n\nfor (const varName of optional) {\n  const value = $env[varName] || '';\n  results.push({\n    variable: varName,\n    status: value.length > 0 ? 'pass' : 'skip',\n    required: false,\n    message: value.length > 0 ? 'Set' : 'Not configured (optional)'\n  });\n}\n\nreturn [{\n  json: {\n    success: allPassed,\n    data: { env_results: results },\n    error: allPassed ? null : { code: 'ENV_VALIDATION_FAILED', message: 'One or more required variables are missing' },\n    metadata: {\n      step: 'env_validation',\n      timestamp: new Date().toISOString(),\n      items_processed: required.length + optional.length,\n      items_failed: results.filter(r => r.status === 'fail').length\n    }\n  }\n}];"
+      },
+      "id": "w0-env-check",
+      "name": "Code: Validate Environment Variables",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.PULSE_PLANE_BASE_URL }}/api/v1/workspaces/{{ $env.PULSE_PLANE_WORKSPACE_SLUG }}/projects/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "w0-plane-test",
+      "name": "Test Plane API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 160],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst statusCode = $input.first().json.$response?.statusCode || 200;\nconst isError = !!response.error || statusCode >= 400;\n\nreturn [{\n  json: {\n    test: 'plane_api',\n    status: isError ? 'fail' : 'pass',\n    message: isError\n      ? `Plane.so API error (HTTP ${statusCode}): ${response.message || response.error || 'Unknown error'}`\n      : `Plane.so API connected successfully (${response.results?.length ?? 0} projects found)`\n  }\n}];"
+      },
+      "id": "w0-plane-result",
+      "name": "Code: Parse Plane Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 160]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.PULSE_DEEPSEEK_BASE_URL }}/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.PULSE_DEEPSEEK_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"model\": \"deepseek-chat\",\n  \"messages\": [{\"role\": \"user\", \"content\": \"Say 'pulse connection test ok' in exactly those words.\"}],\n  \"max_tokens\": 20,\n  \"temperature\": 0\n}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "w0-deepseek-test",
+      "name": "Test DeepSeek API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst isError = !!response.error;\n\nlet message;\nif (isError) {\n  message = `DeepSeek API error: ${response.error?.message || JSON.stringify(response.error)}`;\n} else if (response.choices && response.choices.length > 0) {\n  message = `DeepSeek API connected successfully (model: ${response.model || 'unknown'})`;\n} else {\n  message = 'DeepSeek API responded but returned unexpected format';\n}\n\nreturn [{\n  json: {\n    test: 'deepseek_api',\n    status: isError ? 'fail' : 'pass',\n    message\n  }\n}];"
+      },
+      "id": "w0-deepseek-result",
+      "name": "Code: Parse DeepSeek Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// LobeHub webhook connectivity test\n// Only runs if PULSE_LOBEHUB_WEBHOOK_URL is configured\nconst webhookUrl = $env.PULSE_LOBEHUB_WEBHOOK_URL || '';\n\nif (!webhookUrl) {\n  return [{\n    json: {\n      test: 'lobehub_webhook',\n      status: 'skip',\n      message: 'LobeHub webhook URL not configured (optional)'\n    }\n  }];\n}\n\n// If configured, we pass the URL to the next HTTP node\nreturn [{\n  json: {\n    webhook_url: webhookUrl,\n    should_test: true\n  }\n}];"
+      },
+      "id": "w0-lobehub-check",
+      "name": "Code: Check LobeHub Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 440]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "lobehub-configured",
+              "leftValue": "={{ $json.should_test }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "w0-lobehub-if",
+      "name": "IF: LobeHub Configured",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 440]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.webhook_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"action\": \"ping\",\n  \"source\": \"w0-environment-validator\"\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "w0-lobehub-test",
+      "name": "Test LobeHub Webhook",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 380],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst statusCode = $input.first().json.$response?.statusCode || 200;\nconst isError = statusCode >= 400;\n\nreturn [{\n  json: {\n    test: 'lobehub_webhook',\n    status: isError ? 'fail' : 'pass',\n    message: isError\n      ? `LobeHub webhook error (HTTP ${statusCode})`\n      : 'LobeHub webhook reachable'\n  }\n}];"
+      },
+      "id": "w0-lobehub-result",
+      "name": "Code: Parse LobeHub Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 380]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{\n  json: {\n    test: 'lobehub_webhook',\n    status: 'skip',\n    message: 'LobeHub webhook URL not configured (optional)'\n  }\n}];"
+      },
+      "id": "w0-lobehub-skip",
+      "name": "Code: LobeHub Skipped",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 520]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Aggregate all test results\nconst allItems = $input.all().map(i => i.json);\n\n// Get env validation from the first workflow item\nconst envData = $('Code: Validate Environment Variables').first().json;\nconst envResults = envData.data.env_results;\n\n// Collect connectivity test results\nconst connectivityTests = allItems;\n\n// Build final report\nconst allTests = [\n  ...envResults.map(r => ({\n    category: 'environment',\n    name: r.variable,\n    status: r.status,\n    message: r.message\n  })),\n  ...connectivityTests.map(r => ({\n    category: 'connectivity',\n    name: r.test,\n    status: r.status,\n    message: r.message\n  }))\n];\n\nconst failCount = allTests.filter(t => t.status === 'fail').length;\nconst passCount = allTests.filter(t => t.status === 'pass').length;\nconst skipCount = allTests.filter(t => t.status === 'skip').length;\n\nconst overallSuccess = failCount === 0;\n\nreturn [{\n  json: {\n    success: overallSuccess,\n    data: {\n      summary: {\n        total: allTests.length,\n        passed: passCount,\n        failed: failCount,\n        skipped: skipCount\n      },\n      tests: allTests\n    },\n    error: overallSuccess\n      ? null\n      : { code: 'W0_VALIDATION_FAILED', message: `${failCount} test(s) failed` },\n    metadata: {\n      step: 'w0_environment_validator',\n      timestamp: new Date().toISOString(),\n      items_processed: allTests.length,\n      items_failed: failCount\n    }\n  }\n}];"
+      },
+      "id": "w0-summary",
+      "name": "Code: Build Validation Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "content": "## W0 - Environment Validator\n\n**Purpose:** Test all external connections and validate environment configuration.\n\n**Trigger:** Manual only — run after initial setup or configuration changes.\n\n**Tests:**\n1. Environment variable presence check (all PULSE_ vars)\n2. Plane.so API connectivity (list projects)\n3. DeepSeek API connectivity (simple completion)\n4. LobeHub webhook callback (if configured)\n\n**Note:** DRY_RUN has no effect on W0 — validation always executes reads only.",
+        "height": 340,
+        "width": 380
+      },
+      "id": "w0-sticky",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [200, 500]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          { "node": "Code: Validate Environment Variables", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Code: Validate Environment Variables": {
+      "main": [
+        [
+          { "node": "Test Plane API", "type": "main", "index": 0 },
+          { "node": "Test DeepSeek API", "type": "main", "index": 0 },
+          { "node": "Code: Check LobeHub Config", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Test Plane API": {
+      "main": [
+        [
+          { "node": "Code: Parse Plane Result", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Code: Parse Plane Result": {
+      "main": [
+        [
+          { "node": "Code: Build Validation Report", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Test DeepSeek API": {
+      "main": [
+        [
+          { "node": "Code: Parse DeepSeek Result", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Code: Parse DeepSeek Result": {
+      "main": [
+        [
+          { "node": "Code: Build Validation Report", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Code: Check LobeHub Config": {
+      "main": [
+        [
+          { "node": "IF: LobeHub Configured", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "IF: LobeHub Configured": {
+      "main": [
+        [
+          { "node": "Test LobeHub Webhook", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Code: LobeHub Skipped", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Test LobeHub Webhook": {
+      "main": [
+        [
+          { "node": "Code: Parse LobeHub Result", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Code: Parse LobeHub Result": {
+      "main": [
+        [
+          { "node": "Code: Build Validation Report", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Code: LobeHub Skipped": {
+      "main": [
+        [
+          { "node": "Code: Build Validation Report", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "pinData": {}
+}
