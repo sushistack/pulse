@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "routine_type": "weekly",
+  "routine_days": ["mon", "wed", "fri"],
+  "routine_time": "07:00",
+  "routine_duration_min": 30,
+  "routine_priority": "high",
+  "routine_mandatory": true,
+  "routine_active_from": "2026-01-01",
+  "routine_active_until": null,
+  "routine_cooldown_days": 0,
+  "source_project_id": "project_abc123",
+  "source_issue_id": "issue_xyz789"
+}

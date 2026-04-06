@@ -1,2 +1,12 @@
 .claude
 _bmad
+
+# Environment
+.env
+
+# Dependencies
+node_modules/
+
+# n8n temporary files
+*.tmp
+*.bak

@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "pulse-meta",
+  "description": "Routine metadata schema for pulse quest generation pipeline",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "routine_type",
+    "routine_days",
+    "routine_time",
+    "routine_duration_min",
+    "routine_priority",
+    "routine_mandatory",
+    "routine_active_from",
+    "routine_cooldown_days",
+    "source_project_id",
+    "source_issue_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version for future migration support"
+    },
+    "routine_type": {
+      "type": "string",
+      "enum": ["daily", "weekly", "custom"],
+      "description": "Routine recurrence type"
+    },
+    "routine_days": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+      },
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "Days of the week this routine is active"
+    },
+    "routine_time": {
+      "type": "string",
+      "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+      "description": "Scheduled time in HH:MM (24-hour, KST)"
+    },
+    "routine_duration_min": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 480,
+      "description": "Duration in minutes"
+    },
+    "routine_priority": {
+      "type": "string",
+      "enum": ["urgent", "high", "medium", "low"],
+      "description": "Quest priority level"
+    },
+    "routine_mandatory": {
+      "type": "boolean",
+      "description": "Whether the quest is mandatory (affects deferral behavior)"
+    },
+    "routine_active_from": {
+      "type": "string",
+      "format": "date",
+      "description": "Start date for routine activation (YYYY-MM-DD)"
+    },
+    "routine_active_until": {
+      "type": ["string", "null"],
+      "format": "date",
+      "description": "End date for routine activation (YYYY-MM-DD), null for indefinite"
+    },
+    "routine_cooldown_days": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Minimum days between quest generation"
+    },
+    "source_project_id": {
+      "type": "string",
+      "description": "Plane.so project ID where the routine is defined"
+    },
+    "source_issue_id": {
+      "type": "string",
+      "description": "Plane.so issue ID of the routine definition"
+    }
+  },
+  "additionalProperties": false
+}

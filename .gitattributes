@@ -1,0 +1,2 @@
+# Treat n8n workflow JSON as binary for cleaner diffs
+workflows/*.json diff=json
