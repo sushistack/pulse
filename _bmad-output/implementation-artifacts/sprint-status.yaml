@@ -89,7 +89,7 @@ development_status:
   # Epic 6: Natural Language & Conversational Intelligence
   epic-6: in-progress
   6-1-natural-language-intent-classification: done
-  6-2-natural-language-routine-creation: backlog
+  6-2-natural-language-routine-creation: done
   6-3-session-collision-handling: backlog
   epic-6-retrospective: optional
 
