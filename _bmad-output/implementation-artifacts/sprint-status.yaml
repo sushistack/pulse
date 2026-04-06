@@ -82,7 +82,7 @@ development_status:
   # Epic 5: AI-Enhanced Quest Intelligence
   epic-5: in-progress
   5-1-w1-step-3-llm-task-generation: done
-  5-2-w1-step-4-llm-schedule-optimization: backlog
+  5-2-w1-step-4-llm-schedule-optimization: done
   5-3-w1-step-5-llm-deferred-quest-restoration: backlog
   epic-5-retrospective: optional
 
