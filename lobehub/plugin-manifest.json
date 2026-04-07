@@ -66,11 +66,21 @@
   "gateway": "https://n8n.eli.kr/webhook/pulse-command",
   "version": "1",
   "settings": {
+    "type": "object",
+    "properties": {
+      "apiKey": {
+        "title": "API Key",
+        "type": "string",
+        "description": "n8n webhook authentication key (PULSE_N8N_WEBHOOK_SECRET)",
+        "format": "password"
+      }
+    },
+    "required": ["apiKey"],
     "auth": {
       "type": "header",
       "header": {
         "key": "X-API-Key",
-        "value": "{{PULSE_N8N_WEBHOOK_SECRET}}"
+        "value": "{{apiKey}}"
       }
     }
   },

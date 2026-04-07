@@ -5,10 +5,9 @@
       "parameters": {
         "httpMethod": "POST",
         "path": "pulse-command",
-        "authentication": "headerAuth",
-        "options": {
-          "responseMode": "lastNode"
-        }
+        "authentication": "none",
+        "responseMode": "lastNode",
+        "options": {}
       },
       "id": "w2-webhook",
       "name": "Webhook: Command Entry",
@@ -22,7 +21,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ===========================================\n// W2 Command Router\n// ===========================================\n// Extracts action from request body, routes to handler.\n// Note: API key validation is handled by the webhook node's headerAuth.\n\nconst body = $input.first().json.body || $input.first().json;\nconst action = (body.action || '').toLowerCase().trim();\nconst target = body.target || null;\nconst params = body.params || {};\n\n// Valid actions\nconst validActions = [\n  'today', 'complete', 'cancel', 'defer', 'restore', 'edit',\n  'add', 'regen', 'brief', 'stats', 'deferred', 'preview',\n  'weekly', 'help', 'ping', 'classify', 'create_routine'\n];\n\nif (!validActions.includes(action)) {\n  return [{\n    json: {\n      response_type: 'error',\n      message: `\\u274C [UNKNOWN_COMMAND] Unknown command '${action}'. Type /help for available commands.`,\n      data: { error_code: 'UNKNOWN_COMMAND' },\n      suggestions: ['Type /help for available commands'],\n      awaiting_input: false,\n      _route: 'error'\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    action,\n    target,\n    params,\n    _route: action\n  }\n}];"
+        "jsCode": "// ===========================================\n// W2 Command Router (With Auth & Smart Parse)\n// ===========================================\n\nconst headers = $input.first().json.headers || {};\nlet raw = $input.first().json.body || $input.first().json || {};\n\n// 1. Handle Raw String Body (LobeChat sometimes sends text/plain)\nif (typeof raw === 'string') {\n  try { raw = JSON.parse(raw); } catch (e) {}\n}\n\n// 2. Authenticate\nconst expectedSecret = 'v9z8x7c6v5b4n3m2q1w2e3r4t5y6u7i8o9p0a1s2d3==';\nlet providedKey = '';\n\nif (headers['x-api-key']) {\n  providedKey = headers['x-api-key'];\n}\nelse if (headers['x-lobe-plugin-settings']) {\n  try {\n    const settings = JSON.parse(headers['x-lobe-plugin-settings']);\n    providedKey = settings.apiKey || '';\n  } catch (e) {}\n}\n\nif (providedKey !== expectedSecret) {\n  return [{\n    json: {\n      response_type: 'error',\n      message: '\\u274C [AUTH_ERROR] Invalid API Key. Please check your plugin settings.',\n      data: { error_code: 'AUTH_ERROR' },\n      _route: 'error'\n    }\n  }];\n}\n\n// 3. Extract Commands\nlet action, target, params;\n\n// LobeChat gateway format detection\nif (raw.apiName && raw.arguments) {\n  let args = raw.arguments;\n  if (typeof args === 'string') {\n    try { args = JSON.parse(args); } catch (e) { args = {}; }\n  }\n  action = (args.action || '').toLowerCase().trim();\n  target = args.target || null;\n  params = args.params || {};\n} else {\n  action = (raw.action || '').toLowerCase().trim();\n  target = raw.target || null;\n  params = raw.params || {};\n}\n\n// 4. Command Validation\nconst validActions = [\n  'today', 'complete', 'cancel', 'defer', 'restore', 'edit',\n  'add', 'regen', 'brief', 'stats', 'deferred', 'preview',\n  'weekly', 'help', 'ping', 'classify', 'create_routine'\n];\n\nif (!action || !validActions.includes(action)) {\n  return [{\n    json: {\n      response_type: 'error',\n      message: `\\u274C [UNKNOWN_COMMAND] Unknown command '${action || 'empty'}'. Raw body: ${JSON.stringify(raw).substring(0, 100)}`,\n      data: { error_code: 'UNKNOWN_COMMAND' },\n      _route: 'error'\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    action,\n    target,\n    params,\n    _route: action\n  }\n}];"
       },
       "id": "w2-router",
       "name": "Code: Command Router",
@@ -39,13 +38,19 @@
           "values": [
             {
               "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
                 "conditions": [
                   {
                     "leftValue": "={{ $json._route }}",
                     "rightValue": "today",
                     "operator": {
                       "type": "string",
-                      "operation": "equals"
+                      "operation": "equals",
+                      "caseSensitive": true
                     }
                   }
                 ],
@@ -55,13 +60,19 @@
             },
             {
               "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
                 "conditions": [
                   {
                     "leftValue": "={{ $json._route }}",
                     "rightValue": "help",
                     "operator": {
                       "type": "string",
-                      "operation": "equals"
+                      "operation": "equals",
+                      "caseSensitive": true
                     }
                   }
                 ],
@@ -71,13 +82,19 @@
             },
             {
               "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
                 "conditions": [
                   {
                     "leftValue": "={{ $json._route }}",
                     "rightValue": "ping",
                     "operator": {
                       "type": "string",
-                      "operation": "equals"
+                      "operation": "equals",
+                      "caseSensitive": true
                     }
                   }
                 ],
@@ -87,13 +104,19 @@
             },
             {
               "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
                 "conditions": [
                   {
                     "leftValue": "={{ $json._route }}",
                     "rightValue": "error",
                     "operator": {
                       "type": "string",
-                      "operation": "equals"
+                      "operation": "equals",
+                      "caseSensitive": true
                     }
                   }
                 ],
@@ -103,13 +126,19 @@
             },
             {
               "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
                 "conditions": [
                   {
                     "leftValue": "={{ $json._route }}",
                     "rightValue": "complete",
                     "operator": {
                       "type": "string",
-                      "operation": "equals"
+                      "operation": "equals",
+                      "caseSensitive": true
                     }
                   }
                 ],
@@ -119,13 +148,19 @@
             },
             {
               "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
                 "conditions": [
                   {
                     "leftValue": "={{ $json._route }}",
                     "rightValue": "cancel",
                     "operator": {
                       "type": "string",
-                      "operation": "equals"
+                      "operation": "equals",
+                      "caseSensitive": true
                     }
                   }
                 ],
@@ -135,13 +170,19 @@
             },
             {
               "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
                 "conditions": [
                   {
                     "leftValue": "={{ $json._route }}",
                     "rightValue": "defer",
                     "operator": {
                       "type": "string",
-                      "operation": "equals"
+                      "operation": "equals",
+                      "caseSensitive": true
                     }
                   }
                 ],
@@ -151,13 +192,19 @@
             },
             {
               "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
                 "conditions": [
                   {
                     "leftValue": "={{ $json._route }}",
                     "rightValue": "add",
                     "operator": {
                       "type": "string",
-                      "operation": "equals"
+                      "operation": "equals",
+                      "caseSensitive": true
                     }
                   }
                 ],
@@ -167,13 +214,19 @@
             },
             {
               "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
                 "conditions": [
                   {
                     "leftValue": "={{ $json._route }}",
                     "rightValue": "restore",
                     "operator": {
                       "type": "string",
-                      "operation": "equals"
+                      "operation": "equals",
+                      "caseSensitive": true
                     }
                   }
                 ],
@@ -183,13 +236,19 @@
             },
             {
               "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
                 "conditions": [
                   {
                     "leftValue": "={{ $json._route }}",
                     "rightValue": "edit",
                     "operator": {
                       "type": "string",
-                      "operation": "equals"
+                      "operation": "equals",
+                      "caseSensitive": true
                     }
                   }
                 ],
@@ -199,13 +258,19 @@
             },
             {
               "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
                 "conditions": [
                   {
                     "leftValue": "={{ $json._route }}",
                     "rightValue": "regen",
                     "operator": {
                       "type": "string",
-                      "operation": "equals"
+                      "operation": "equals",
+                      "caseSensitive": true
                     }
                   }
                 ],
@@ -215,13 +280,19 @@
             },
             {
               "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
                 "conditions": [
                   {
                     "leftValue": "={{ $json._route }}",
                     "rightValue": "brief",
                     "operator": {
                       "type": "string",
-                      "operation": "equals"
+                      "operation": "equals",
+                      "caseSensitive": true
                     }
                   }
                 ],
@@ -231,13 +302,19 @@
             },
             {
               "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
                 "conditions": [
                   {
                     "leftValue": "={{ $json._route }}",
                     "rightValue": "stats",
                     "operator": {
                       "type": "string",
-                      "operation": "equals"
+                      "operation": "equals",
+                      "caseSensitive": true
                     }
                   }
                 ],
@@ -247,13 +324,19 @@
             },
             {
               "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
                 "conditions": [
                   {
                     "leftValue": "={{ $json._route }}",
                     "rightValue": "deferred",
                     "operator": {
                       "type": "string",
-                      "operation": "equals"
+                      "operation": "equals",
+                      "caseSensitive": true
                     }
                   }
                 ],
@@ -263,13 +346,19 @@
             },
             {
               "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
                 "conditions": [
                   {
                     "leftValue": "={{ $json._route }}",
                     "rightValue": "preview",
                     "operator": {
                       "type": "string",
-                      "operation": "equals"
+                      "operation": "equals",
+                      "caseSensitive": true
                     }
                   }
                 ],
@@ -279,13 +368,19 @@
             },
             {
               "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
                 "conditions": [
                   {
                     "leftValue": "={{ $json._route }}",
                     "rightValue": "weekly",
                     "operator": {
                       "type": "string",
-                      "operation": "equals"
+                      "operation": "equals",
+                      "caseSensitive": true
                     }
                   }
                 ],
@@ -295,13 +390,19 @@
             },
             {
               "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
                 "conditions": [
                   {
                     "leftValue": "={{ $json._route }}",
                     "rightValue": "classify",
                     "operator": {
                       "type": "string",
-                      "operation": "equals"
+                      "operation": "equals",
+                      "caseSensitive": true
                     }
                   }
                 ],
@@ -311,13 +412,19 @@
             },
             {
               "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
                 "conditions": [
                   {
                     "leftValue": "={{ $json._route }}",
                     "rightValue": "create_routine",
                     "operator": {
                       "type": "string",
-                      "operation": "equals"
+                      "operation": "equals",
+                      "caseSensitive": true
                     }
                   }
                 ],
